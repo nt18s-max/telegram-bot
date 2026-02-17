@@ -1,67 +1,131 @@
+# -*- coding: utf-8 -*-
+import requests
+import csv
+from io import StringIO
 import telebot
-import json
+from telebot import types
+from datetime import datetime
 
-# ===== توكن البوت =====
+# --- توكن البوت الجديد ---
 TOKEN = "8514084720:AAHqsr3JLTvb5uSJ2IxJRQ6hNYH>
 bot = telebot.TeleBot(TOKEN)
 
-# ===== ملف البيانات =====
-DATA_FILE = "data.json"
+# --- رابط CSV العام ---
+CSV_URL = "https://docs.google.com/spreadsheets>
 
-# ===== قراءة البيانات =====
+# --- تحميل البيانات ---
 def load_data():
-    try:
-        with open(DATA_FILE, "r", encoding="utf>
-            data = json.load(f)
-    except FileNotFoundError:
-        data = {}
-    return data
+    response = requests.get(CSV_URL)
+    response.encoding = 'utf-8'
+    f = StringIO(response.text)
+    reader = csv.DictReader(f)
+    return list(reader)
 
-# ===== رسالة ترحيبية =====
-@bot.message_handler(commands=["start"])
-def send_welcome(message):
-    bot.reply_to(message, "مرحبًا 👋\nاستخدم /تك>
+data = load_data()
 
-# ===== عرض قائمة المواد =====
-@bot.message_handler(commands=["تكاليف"])
-def list_subjects(message):
+# --- تتبع التنبيهات لمرة واحدة لكل مستخدم ---
+user_alert_sent = {}
+
+# --- القائمة الرئيسية ---
+def main_menu():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📚 ا>
+    markup.add(types.InlineKeyboardButton("🕘 أ>
+    markup.add(types.InlineKeyboardButton("📝 ا>
+    markup.add(types.InlineKeyboardButton("💰 أ>
+    markup.add(types.InlineKeyboardButton("⚠️ تن>
+    return markup
+
+# --- بدء البوت ---@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "مرحبًا! ا>
+
+# --- التعامل مع الأزرار ---
+@bot.callback_query_handler(func=lambda call: T>
+def callback_handler(call):
+    global data
+    chat_id = call.message.chat.id
+    today_str = datetime.now().strftime("%d/%m/>
+    data_today = [row for row in data if row['ا>
+
+    # إعادة تحميل البيانات عند كل تفاعل للتحديث>
     data = load_data()
 
-    if not data:
-        bot.reply_to(message, "لا توجد بيانات م>
-        return
+    # --- المواد (شجرة) ---
+    if call.data == 'materials':
+        materials = sorted(list({row['المادة'] >
+        markup = types.InlineKeyboardMarkup()
+        for mat in materials:
+            markup.add(types.InlineKeyboardButt>
+        markup.add(types.InlineKeyboardButton(">
+        bot.edit_message_text("اختر المادة:", c>
 
-    markup = telebot.types.ReplyKeyboardMarkup(>
-    buttons = [telebot.types.KeyboardButton(nam>
-    markup.add(*buttons)
+    elif call.data.startswith('mat_'):
+        mat_name = call.data.split('_',1)[1]
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(">
+        markup.add(types.InlineKeyboardButton(">
+        markup.add(types.InlineKeyboardButton(">
+        bot.edit_message_text(f"اختر ما تريد مع>
 
-    bot.send_message(message.chat.id, "اختر الم>
-# ===== عند اختيار مادة =====
-@bot.message_handler(func=lambda message: True)
-def show_subject_cost(message):
-    data = load_data()
-    subject = message.text
+    elif call.data.startswith('time_'):
+        mat_name = call.data.split('_',1)[1]
+        rows = [row for row in data if row['الم>
+        rows.sort(key=lambda x: datetime.strpti>
+        text = f"⏰ أوقات محاضرات {mat_name}:\n"
+        for r in rows:
+            text += f"{r['التاريخ']} – {r['وقت >
+        bot.edit_message_text(text, chat_id, caelif call.data.startswith('cost_'):
+        mat_name = call.data.split('_',1)[1]
+        rows = [row for row in data if row['الم>
+        rows.sort(key=lambda x: datetime.strpti>
+        text = f"📝 التكاليف ل{mat_name}:\n"
+        for r in rows:
+            text += f"{r['التاريخ']} – {r['التك>
+        bot.edit_message_text(text, chat_id, ca>
 
-    if subject in data:
-        cost = data[subject]
-        bot.send_message(message.chat.id, f"تكل>
-    else:
-        bot.send_message(message.chat.id, "الما>
+    # --- أوقات المحاضرات اليوم ---
+    elif call.data == 'times':
+        if not data_today:
+            bot.edit_message_text("لا توجد محاض>
+            return
+        text = "🕘 أوقات المحاضرات اليوم:\n"
+        rows_sorted = sorted(data_today, key=la>
+        for r in rows_sorted:
+            text += f"{r['المادة']} – {r['وقت ا>
+        bot.edit_message_text(text, chat_id, ca>
 
-# ===== عرض جميع المواد =====
-@bot.message_handler(commands=["جميع"])
-def all_subjects(message):
-    data = load_data()
+    # --- التكاليف اليوم ---
+    elif call.data == 'costs':
+        if not data_today:
+            bot.edit_message_text("لا توجد تكال>
+            return
+        text = "📝 التكاليف اليوم:\n"
+        rows_sorted = sorted(data_today, key=la>
+        for r in rows_sorted:
+            text += f"{r['المادة']} – {r['التكا>
+        bot.edit_message_text(text, chat_id, ca>
 
-    if not data:
-        bot.reply_to(message, "لا توجد بيانات.")
-        return
+    # --- أسعار الملازم ---
+    elif call.data == 'prices':
+        text = "💰 أسعار الملازم:\n"
+        materials = sorted(list({row['المادة'] >
+        for mat in materials:
+            price = next(r['سعر الملزمة'] for r>
+            text += f"{mat} – {price}\n"bot.edit_message_text(text, chat_id, ca>
 
-    text = ""
-    for name, cost in data.items():
-        text += f"{name} : {cost}\n"
+    # --- التنبيهات لمرة واحدة ---
+    elif call.data == 'alerts':
+        if user_alert_sent.get(chat_id):
+            bot.edit_message_text("⚠️ لا توجد مع>
+        else:
+            bot.edit_message_text("⚠️ تنبيه مهم >
+            user_alert_sent[chat_id] = True
 
-    bot.send_message(message.chat.id, text)
+    # العودة للقائمة الرئيسية
+    elif call.data == 'start':
+        bot.edit_message_text("مرحبًا! اختر أحد >
 
-# ===== تشغيل البوت =====
+# --- تشغيل البوت ---
+bot.delete_webhook()
 bot.infinity_polling()
