@@ -3,19 +3,19 @@ import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+from env import TOKEN, SHEET_KEY, ALLOWED_USERS  # استدعاء المتغيرات من env.py
 
 # ----- إعدادات البوت -----
-TOKEN = "8514084720:AAHqsr3JLTvb5uSJ2IxJRQ6hNYHCtRKneps"
 bot = telebot.TeleBot(TOKEN)
 
 # ----- إعدادات Google Sheets -----
 scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/drive']
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
-sheet = client.open_by_key("1miGc6eWklKkkvoelvoZmRxJ6ddXeGBSl91Ucj6rOrPs").sheet1
+sheet = client.open_by_key(SHEET_KEY).sheet1
 
 # ----- صلاحيات المستخدم -----
-allowed_users = [123456789]  # ضع هنا ID الحسابات المسموح لها
+allowed_users = ALLOWED_USERS
 def check_user(message):
     return message.from_user.id in allowed_users
 
@@ -49,15 +49,18 @@ def handle_message(message):
         bot.send_message(message.chat.id, f"{day}\n{times}")
 
     elif text == "التكاليف":
-        today = datetime.today().strftime("%Y-%m-%d")
         rows = sheet.get_all_values()
-        found = False
-        for row in rows:
-            if row[0] == today:
-                found = True
-                bot.send_message(message.chat.id, row[2])  # العمود 2: التكاليف
-        if not found:
-            bot.send_message(message.chat.id, "لا يوجد تكاليف")
+        dates_with_costs = [row[0] for row in rows if row[2]]  # العمود 2: التكاليف
+        if not dates_with_costs:
+            bot.send_message(message.chat.id, "لا يوجد تكاليف حتى الآن")
+            return
+
+        # عرض الأيام كأزرار للاختيار
+        markup = telebot.types.InlineKeyboardMarkup()
+        for date in dates_with_costs:
+            markup.add(telebot.types.InlineKeyboardButton(f"📅 {date}", callback_data=f"cost_{date}"))
+        markup.add(telebot.types.InlineKeyboardButton("⬅️ العودة", callback_data="back_main"))
+        bot.send_message(message.chat.id, "اختر اليوم لعرض التكاليف:", reply_markup=markup)
 
     elif text == "الملخصات":
         today = datetime.today().strftime("%Y-%m-%d")
@@ -69,6 +72,23 @@ def handle_message(message):
                 bot.send_message(message.chat.id, row[3])  # العمود 3: الملخصات
         if not found:
             bot.send_message(message.chat.id, "لا يوجد ملخصات")
+
+# ----- التعامل مع أزرار Inline -----
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    if call.data.startswith("cost_"):
+        date_selected = call.data.split("_")[1]
+        rows = sheet.get_all_values()
+        # إرسال الملفات أو النصوص الخاصة بالتاريخ المحدد
+        for row in rows:
+            if row[0] == date_selected and row[2]:  # العمود 2: التكاليف
+                bot.send_message(call.message.chat.id, f"{row[2]}")  # هنا يمكن تعديل لإرسال ملفات بالـ File ID
+        # تترك النافذة مفتوحة مع زر العودة
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    elif call.data == "back_main":
+        markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        markup.add("ابدأ", "بحث باليوم", "تنبيهات", "تشيك الحساب")
+        bot.send_message(call.message.chat.id, "اختر من القائمة الجانبية:", reply_markup=markup)
 
 # ----- بدء البوت -----
 bot.infinity_polling()
