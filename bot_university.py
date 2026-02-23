@@ -76,14 +76,13 @@ def get_data():
         print(f"خطأ في جلب البيانات: {e}")
         return []
 
+NO_ACCESS_MSG = "⛔ غير مسموح لك باستخدام البوت\n\nالرجاء طلب الصلاحية من منشئ البوت\n                         @nt18s"
+
 # ----- /start -----
 @bot.message_handler(commands=['start'])
 def start_message(message):
     if not check_user(message):
-        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت
-
-الرجاء طلب الصلاحية من منشئ البوت
-@nt18s")
+        bot.send_message(message.chat.id, NO_ACCESS_MSG)
         return
     user_state.pop(message.from_user.id, None)
     bot.send_message(message.chat.id, "مرحبًا! اختر أحد الخيارات:", reply_markup=main_menu())
@@ -92,10 +91,7 @@ def start_message(message):
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     if not check_user(message):
-        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت
-
-الرجاء طلب الصلاحية من منشئ البوت
-@nt18s")
+        bot.send_message(message.chat.id, NO_ACCESS_MSG)
         return
     if sheet is None:
         bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
