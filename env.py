@@ -1,2 +1,0 @@
-TOKEN="8514084720:AAFnu3luEU4C8seODqO7Od9deRtQdihojJw"
-SHEET_KEY="1miGc6eWklKkkvoelvoZmRxJ6ddXeGBSl91Ucj6rOrPs"
