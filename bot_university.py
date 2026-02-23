@@ -80,7 +80,10 @@ def get_data():
 @bot.message_handler(commands=['start'])
 def start_message(message):
     if not check_user(message):
-        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت.")
+        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت
+
+الرجاء طلب الصلاحية من منشئ البوت
+@nt18s")
         return
     user_state.pop(message.from_user.id, None)
     bot.send_message(message.chat.id, "مرحبًا! اختر أحد الخيارات:", reply_markup=main_menu())
@@ -89,7 +92,10 @@ def start_message(message):
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     if not check_user(message):
-        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت.")
+        bot.send_message(message.chat.id, "⛔ غير مسموح لك باستخدام البوت
+
+الرجاء طلب الصلاحية من منشئ البوت
+@nt18s")
         return
     if sheet is None:
         bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
