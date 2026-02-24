@@ -1,2 +1,5 @@
 pyTelegramBotAPI
 requests
+gspread
+oauth2client
+python-dotenv
