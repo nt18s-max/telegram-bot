@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import os
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,33 +31,81 @@ try:
     spreadsheet = client.open_by_key(SHEET_KEY)
     sheet = spreadsheet.sheet1
     users_sheet = spreadsheet.worksheet("المستخدمين")
+    help_sheet = spreadsheet.worksheet("المساعدة")
 except Exception as e:
     print(f"خطأ في الاتصال بـ Google Sheets: {e}")
     sheet = None
     users_sheet = None
+    help_sheet = None
 
 # ----- حالة المستخدم -----
 user_state = {}
 
-# ----- رسالة عدم الصلاحية -----
-NO_ACCESS_MSG = "⛔ غير مسموح لك باستخدام البوت\n\nالرجاء طلب الصلاحية من منشئ البوت\n                         @nt18s"
-
 # ----- أيام الأسبوع -----
 DAYS_AR = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
 
-# ----- صلاحيات من الشيت -----
+# ----- قراءة الإعدادات من الشيت الثالث -----
+def get_settings():
+    try:
+        rows = help_sheet.get_all_values()
+        welcome = "مرحبًا! اختر أحد الخيارات:"
+        rejection = "⛔ غير مسموح لك باستخدام البوت\n\nالرجاء طلب الصلاحية من منشئ البوت\n                         @nt18s"
+        videos = []
+        for row in rows:
+            if not row:
+                continue
+            key = row[0].strip() if row else ""
+            val = row[1].strip() if len(row) > 1 else ""
+            if key == "رسالة_الترحيب":
+                welcome = val
+            elif key == "رسالة_الرفض":
+                rejection = val
+            elif key == "فيديو" and val:
+                videos.append(val)
+        return welcome, rejection, videos
+    except Exception as e:
+        print(f"خطأ في جلب الإعدادات: {e}")
+        return "مرحبًا! اختر أحد الخيارات:", "⛔ غير مسموح", []
+
+# ----- قراءة المواد من الشيت الأول -----
+def get_subjects():
+    try:
+        rows = sheet.get_all_values()
+        subjects = []
+        for row in rows[1:]:
+            subj = row[1].strip() if len(row) > 1 else ""
+            if subj and subj not in subjects:
+                subjects.append(subj)
+        return subjects
+    except Exception as e:
+        print(f"خطأ في جلب المواد: {e}")
+        return []
+
+# ----- صلاحيات من الشيت الثاني -----
 def get_users():
-    """يجلب قائمة المستخدمين من شيت المستخدمين"""
     try:
         rows = users_sheet.get_all_values()
         allowed = []
         admins = []
+        open_all = False
+        admin_all = False
+        # الصف الأول عناوين، نبدأ من الثاني
         for row in rows[1:]:
-            if len(row) < 3:
+            if not row:
                 continue
-            uid_str = row[1].strip()
-            allowed_val = row[2].strip().upper()
+            name = row[0].strip() if row else ""
+            uid_str = row[1].strip() if len(row) > 1 else ""
+            allowed_val = row[2].strip().upper() if len(row) > 2 else "FALSE"
             admin_val = row[3].strip().upper() if len(row) > 3 else "FALSE"
+
+            # صف الكل
+            if name == "الكل":
+                if allowed_val == "TRUE":
+                    open_all = True
+                if admin_val == "TRUE":
+                    admin_all = True
+                continue
+
             if not uid_str.isdigit():
                 continue
             uid = int(uid_str)
@@ -63,18 +113,19 @@ def get_users():
                 allowed.append(uid)
             if admin_val == "TRUE":
                 admins.append(uid)
-        return allowed, admins
+
+        return allowed, admins, open_all, admin_all
     except Exception as e:
         print(f"خطأ في جلب المستخدمين: {e}")
-        return [], []
+        return [], [], False, False
 
 def check_user(message):
-    allowed, _ = get_users()
-    return message.from_user.id in allowed
+    allowed, _, open_all, _ = get_users()
+    return open_all or message.from_user.id in allowed
 
 def is_admin(message):
-    _, admins = get_users()
-    return message.from_user.id in admins
+    _, admins, _, admin_all = get_users()
+    return admin_all or message.from_user.id in admins
 
 # ----- مساعدات الخلية -----
 def get_text(cell):
@@ -114,13 +165,16 @@ def main_menu(admin=False):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add("📚 المواد", "🕐 أوقات المحاضرات", "📝 التكاليف", "💰 أسعار الملازم", "⚠️ تنبيهات")
     if admin:
-        markup.add("📤 رفع ملف")
+        markup.add("📤 رفع ملف", "📹 رفع فيديو مساعدة")
     return markup
 
 def subjects_menu():
+    subjects = get_subjects()
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    markup.add("إحصاء واحتمالات", "انجليزي", "برمجة", "رياضيات 102", "شبكات", "عربي", "🔙 العودة")
-    return markup
+    for s in subjects:
+        markup.add(s)
+    markup.add("🔙 العودة")
+    return markup, subjects
 
 def subject_options_menu():
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
@@ -181,21 +235,53 @@ def save_file_to_cell(date, subject, col, file_id):
         print(f"خطأ في حفظ الملف: {e}")
         return False
 
+def save_help_video(file_id):
+    try:
+        help_sheet.append_row(["فيديو", file_id])
+        return True
+    except Exception as e:
+        print(f"خطأ في حفظ فيديو المساعدة: {e}")
+        return False
+
 # ----- /start -----
 @bot.message_handler(commands=['start'])
 def start_message(message):
+    _, rejection, _ = get_settings()
     if not check_user(message):
-        bot.send_message(message.chat.id, NO_ACCESS_MSG)
+        bot.send_message(message.chat.id, rejection)
         return
+    welcome, _, _ = get_settings()
     user_state.pop(message.from_user.id, None)
-    bot.send_message(message.chat.id, "مرحبًا! اختر أحد الخيارات:",
+    bot.send_message(message.chat.id, welcome,
                      reply_markup=main_menu(admin=is_admin(message)))
+
+# ----- /help -----
+@bot.message_handler(commands=['help'])
+def help_message(message):
+    _, rejection, _ = get_settings()
+    if not check_user(message):
+        bot.send_message(message.chat.id, rejection)
+        return
+    _, _, videos = get_settings()
+    if not videos:
+        bot.send_message(message.chat.id, "📭 لا توجد فيديوهات مساعدة حالياً.")
+        return
+    bot.send_message(message.chat.id, "🎬 *فيديوهات المساعدة:*", parse_mode="Markdown")
+    for fid in videos:
+        try:
+            bot.send_video(message.chat.id, fid)
+        except:
+            try:
+                bot.send_document(message.chat.id, fid)
+            except:
+                pass
 
 # ----- استقبال الملفات -----
 @bot.message_handler(content_types=['document', 'photo', 'video', 'audio'])
 def handle_file(message):
+    _, rejection, _ = get_settings()
     if not check_user(message):
-        bot.send_message(message.chat.id, NO_ACCESS_MSG)
+        bot.send_message(message.chat.id, rejection)
         return
     if not is_admin(message):
         bot.send_message(message.chat.id, "⛔ فقط المدير يستطيع رفع الملفات.")
@@ -204,23 +290,39 @@ def handle_file(message):
     uid = message.from_user.id
     state = user_state.get(uid, {})
 
-    if state.get("uploading") and state.get("step") == "waiting_file":
-        if message.document:
-            file_id = message.document.file_id
-        elif message.photo:
-            file_id = message.photo[-1].file_id
-        elif message.video:
-            file_id = message.video.file_id
-        elif message.audio:
-            file_id = message.audio.file_id
-        else:
-            file_id = None
+    if message.document:
+        file_id = message.document.file_id
+    elif message.photo:
+        file_id = message.photo[-1].file_id
+    elif message.video:
+        file_id = message.video.file_id
+    elif message.audio:
+        file_id = message.audio.file_id
+    else:
+        file_id = None
 
-        if file_id:
-            user_state[uid]["file_id"] = file_id
-            user_state[uid]["step"] = "choose_subject"
-            bot.send_message(message.chat.id, "✅ تم استلام الملف!\n\nاختر المادة:",
-                             reply_markup=subjects_menu())
+    if not file_id:
+        return
+
+    # رفع فيديو مساعدة
+    if state.get("uploading_help"):
+        if save_help_video(file_id):
+            bot.send_message(message.chat.id, "✅ تم حفظ فيديو المساعدة!",
+                             reply_markup=main_menu(admin=True))
+        else:
+            bot.send_message(message.chat.id, "❌ حدث خطأ في حفظ الفيديو.",
+                             reply_markup=main_menu(admin=True))
+        user_state.pop(uid, None)
+        return
+
+    # رفع ملف عادي
+    if state.get("uploading") and state.get("step") == "waiting_file":
+        user_state[uid]["file_id"] = file_id
+        user_state[uid]["step"] = "choose_subject"
+        _, subjects = subjects_menu()
+        markup, _ = subjects_menu()
+        bot.send_message(message.chat.id, "✅ تم استلام الملف!\n\nاختر المادة:",
+                         reply_markup=markup)
         return
 
     bot.send_message(message.chat.id, "📤 إذا تريد رفع ملف، اضغط على زر *رفع ملف* أولاً.",
@@ -229,8 +331,9 @@ def handle_file(message):
 # ----- معالجة الرسائل -----
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
+    _, rejection, _ = get_settings()
     if not check_user(message):
-        bot.send_message(message.chat.id, NO_ACCESS_MSG)
+        bot.send_message(message.chat.id, rejection)
         return
     if sheet is None:
         bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
@@ -240,29 +343,42 @@ def handle_message(message):
     text = message.text
     state = user_state.get(uid, {})
     admin = is_admin(message)
-
-    SUBJECTS = ["إحصاء واحتمالات", "انجليزي", "برمجة", "رياضيات 102", "شبكات", "عربي"]
+    _, subjects = subjects_menu()
 
     try:
         # ===== العودة =====
         if text == "🔙 العودة":
-            if state.get("uploading"):
+            if state.get("uploading") or state.get("uploading_help"):
                 user_state.pop(uid, None)
-                bot.send_message(message.chat.id, "مرحبًا! اختر أحد الخيارات:",
+                welcome, _, _ = get_settings()
+                bot.send_message(message.chat.id, welcome,
                                  reply_markup=main_menu(admin=admin))
                 return
-            if state.get("subject") and not state.get("action") and not state.get("awaiting_date"):
-                user_state.pop(uid, None)
-                bot.send_message(message.chat.id, "اختر المادة:", reply_markup=subjects_menu())
-            elif state.get("subject"):
+            if state.get("awaiting_date"):
                 subj = state["subject"]
                 user_state[uid] = {"subject": subj}
                 bot.send_message(message.chat.id, f"📌 اخترت: *{subj}*\nماذا تحتاج؟",
                                  parse_mode="Markdown", reply_markup=subject_options_menu())
-            else:
+                return
+            if state.get("subject"):
                 user_state.pop(uid, None)
-                bot.send_message(message.chat.id, "مرحبًا! اختر أحد الخيارات:",
-                                 reply_markup=main_menu(admin=admin))
+                markup, _ = subjects_menu()
+                bot.send_message(message.chat.id, "اختر المادة:", reply_markup=markup)
+                return
+            user_state.pop(uid, None)
+            welcome, _, _ = get_settings()
+            bot.send_message(message.chat.id, welcome, reply_markup=main_menu(admin=admin))
+            return
+
+        # ===== رفع فيديو مساعدة =====
+        if text == "📹 رفع فيديو مساعدة":
+            if not admin:
+                bot.send_message(message.chat.id, "⛔ فقط المدير يستطيع رفع الفيديوهات.")
+                return
+            user_state[uid] = {"uploading_help": True}
+            markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add("🔙 العودة")
+            bot.send_message(message.chat.id, "📹 أرسل الفيديو الآن:", reply_markup=markup)
             return
 
         # ===== رفع ملف =====
@@ -284,7 +400,7 @@ def handle_message(message):
                 bot.send_message(message.chat.id, "📎 أرسل الملف أولاً.")
                 return
 
-            if step == "choose_subject" and text in SUBJECTS:
+            if step == "choose_subject" and text in subjects:
                 user_state[uid]["subject"] = text
                 user_state[uid]["step"] = "choose_type"
                 bot.send_message(message.chat.id, f"📌 المادة: *{text}*\n\nاختر نوع الملف:",
@@ -321,11 +437,12 @@ def handle_message(message):
         # ===== 📚 المواد =====
         if text == "📚 المواد":
             user_state.pop(uid, None)
-            bot.send_message(message.chat.id, "اختر المادة:", reply_markup=subjects_menu())
+            markup, _ = subjects_menu()
+            bot.send_message(message.chat.id, "اختر المادة:", reply_markup=markup)
             return
 
         # ===== اختيار مادة =====
-        if text in SUBJECTS:
+        if text in subjects:
             user_state[uid] = {"subject": text}
             bot.send_message(message.chat.id, f"📌 اخترت: *{text}*\nماذا تحتاج؟",
                              parse_mode="Markdown", reply_markup=subject_options_menu())
@@ -362,7 +479,7 @@ def handle_message(message):
                                      parse_mode="Markdown", reply_markup=subject_options_menu())
                     return
 
-                user_state[uid] = {"subject": subj, "action": text, "awaiting_date": True, "col": col}
+                user_state[uid] = {"subject": subj, "action": text, "awaiting_date": True, "col": col, "dates": dates}
                 bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu(dates))
                 return
 
@@ -371,13 +488,13 @@ def handle_message(message):
             subj = state["subject"]
             action = state["action"]
             col = state["col"]
+            dates = state.get("dates", [])
             data = get_data()
             matched = [r for r in data if safe_get(r, 1) == subj and parse_date(safe_get(r, 0)) == text]
 
             if not matched:
                 bot.send_message(message.chat.id, "لم يتم العثور على بيانات لهذا التاريخ.",
-                                 reply_markup=subject_options_menu())
-                user_state[uid] = {"subject": subj}
+                                 reply_markup=dates_menu(dates))
                 return
 
             labels = {
@@ -402,8 +519,9 @@ def handle_message(message):
             if response.strip().endswith("─" * 25):
                 response += "لا توجد بيانات."
 
+            # إبقاء قائمة التواريخ مفتوحة
             bot.send_message(message.chat.id, response, parse_mode="Markdown",
-                             reply_markup=subject_options_menu())
+                             reply_markup=dates_menu(dates))
 
             for fid in file_ids:
                 try:
@@ -413,8 +531,6 @@ def handle_message(message):
                         bot.send_photo(message.chat.id, fid)
                     except:
                         pass
-
-            user_state[uid] = {"subject": subj}
             return
 
         # ===== القائمة الرئيسية =====
@@ -478,9 +594,6 @@ def handle_message(message):
         print(f"Error: {e}")
 
 # ----- سيرفر بسيط لإبقاء البوت مستيقظاً -----
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
 class KeepAlive(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
