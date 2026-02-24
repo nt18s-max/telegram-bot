@@ -477,7 +477,24 @@ def handle_message(message):
         bot.send_message(message.chat.id, "❌ حدث خطأ، حاول مرة أخرى.")
         print(f"Error: {e}")
 
+# ----- سيرفر بسيط لإبقاء البوت مستيقظاً -----
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class KeepAlive(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", 8080), KeepAlive)
+    server.serve_forever()
+
 # ----- بدء البوت -----
 if __name__ == "__main__":
+    threading.Thread(target=run_server, daemon=True).start()
     print("البوت يعمل...")
     bot.infinity_polling()
