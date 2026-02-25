@@ -61,7 +61,8 @@ def get_settings():
             elif key == "رسالة_الرفض":
                 rejection = val
             elif key == "فيديو" and val:
-                videos.append(val)
+                file_type = row[2].strip() if len(row) > 2 and row[2].strip() else "video"
+                videos.append((val, file_type))
         return welcome, rejection, videos
     except Exception as e:
         print(f"خطأ في جلب الإعدادات: {e}")
@@ -235,9 +236,9 @@ def save_file_to_cell(date, subject, col, file_id):
         print(f"خطأ في حفظ الملف: {e}")
         return False
 
-def save_help_video(file_id):
+def save_help_video(file_id, file_type="video"):
     try:
-        help_sheet.append_row(["فيديو", file_id])
+        help_sheet.append_row(["فيديو", file_id, file_type])
         return True
     except Exception as e:
         print(f"خطأ في حفظ فيديو المساعدة: {e}")
@@ -267,9 +268,17 @@ def help_message(message):
         bot.send_message(message.chat.id, "📭 لا توجد فيديوهات مساعدة حالياً.")
         return
     bot.send_message(message.chat.id, "🎬 *فيديوهات المساعدة:*", parse_mode="Markdown")
-    for fid in videos:
+    for item in videos:
+        fid, ftype = item if isinstance(item, tuple) else (item, "video")
         try:
-            bot.send_video(message.chat.id, fid)
+            if ftype == "photo":
+                bot.send_photo(message.chat.id, fid)
+            elif ftype == "audio":
+                bot.send_audio(message.chat.id, fid)
+            elif ftype == "document":
+                bot.send_document(message.chat.id, fid)
+            else:
+                bot.send_video(message.chat.id, fid)
         except:
             try:
                 bot.send_document(message.chat.id, fid)
@@ -306,7 +315,17 @@ def handle_file(message):
 
     # رفع فيديو مساعدة
     if state.get("uploading_help"):
-        if save_help_video(file_id):
+        if message.document:
+            ftype = "document"
+        elif message.photo:
+            ftype = "photo"
+        elif message.video:
+            ftype = "video"
+        elif message.audio:
+            ftype = "audio"
+        else:
+            ftype = "document"
+        if save_help_video(file_id, ftype):
             bot.send_message(message.chat.id, "✅ تم حفظ فيديو المساعدة!",
                              reply_markup=main_menu(admin=True))
         else:
