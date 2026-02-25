@@ -60,7 +60,7 @@ def get_settings():
                 welcome = val
             elif key == "رسالة_الرفض":
                 rejection = val
-            elif key == "فيديو" and val:
+            elif key in ["فيديو", "مادة مساعدة"] and val:
                 file_type = row[2].strip() if len(row) > 2 and row[2].strip() else "video"
                 videos.append((val, file_type))
         return welcome, rejection, videos
@@ -238,7 +238,7 @@ def save_file_to_cell(date, subject, col, file_id):
 
 def save_help_video(file_id, file_type="video"):
     try:
-        help_sheet.append_row(["فيديو", file_id, file_type])
+        help_sheet.append_row(["مادة مساعدة", file_id, file_type])
         return True
     except Exception as e:
         print(f"خطأ في حفظ فيديو المساعدة: {e}")
@@ -267,9 +267,12 @@ def help_message(message):
     if not videos:
         bot.send_message(message.chat.id, "📭 لا توجد مواد مساعدة حالياً.")
         return
-    bot.send_message(message.chat.id, "🎬 *فيديوهات المساعدة:*", parse_mode="Markdown")
-    for item in videos:
+    bot.send_message(message.chat.id, "📖 *تعليمات البوت:*", parse_mode="Markdown")
+    for i, item in enumerate(videos, 1):
         fid, ftype = item if isinstance(item, tuple) else (item, "video")
+        type_names = {"video": "🎬 فيديو", "photo": "🖼 صورة", "audio": "🎵 صوت", "document": "📄 ملف"}
+        type_label = type_names.get(ftype, "📎 ملف")
+        bot.send_message(message.chat.id, f"*مادة مساعدة {i}* — {type_label}", parse_mode="Markdown")
         try:
             if ftype == "photo":
                 bot.send_photo(message.chat.id, fid)
