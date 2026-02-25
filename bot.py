@@ -89,6 +89,7 @@ LANG = {
         "task_type": "📝 تكليف", "summary_type": "📖 ملخص",
         "label_time": "🕐 الوقت", "label_task": "📝 التكليف", "label_summary": "📖 الملخص", "label_alert": "⚠️ التنبيه",
         "no_schedule": "لا توجد أوقات محاضرات لـ", "no_tasks_subj": "لا توجد تكاليف لـ", "no_summary": "لا توجد ملخصات لـ", "no_alerts_subj": "لا توجد تنبيهات لـ",
+        "unknown": "غير معروف بعد", "no_exist": "لا يوجد",
     },
     "en": {
         "subjects": "📚 Subjects", "schedule": "🕐 Schedule", "tasks": "📝 Tasks",
@@ -126,6 +127,7 @@ LANG = {
         "task_type": "📝 Task", "summary_type": "📖 Summary",
         "label_time": "🕐 Time", "label_task": "📝 Task", "label_summary": "📖 Summary", "label_alert": "⚠️ Alert",
         "no_schedule": "No schedule for", "no_tasks_subj": "No tasks for", "no_summary": "No summaries for", "no_alerts_subj": "No alerts for",
+        "unknown": "Unknown yet", "no_exist": "Does not exist",
     }
 }
 
@@ -293,10 +295,14 @@ def lang_menu():
 def main_menu(uid, admin=False):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add(t(uid, "subjects"))
-    markup.add(t(uid, "schedule"))
-    markup.add(t(uid, "tasks"))
-    markup.add(t(uid, "prices"))
-    markup.add(t(uid, "alerts"))
+    markup.row(
+        telebot.types.KeyboardButton(t(uid, "tasks")),
+        telebot.types.KeyboardButton(t(uid, "schedule"))
+    )
+    markup.row(
+        telebot.types.KeyboardButton(t(uid, "alerts")),
+        telebot.types.KeyboardButton(t(uid, "prices"))
+    )
     if admin:
         markup.add(t(uid, "add_data"))
         markup.row(
@@ -373,6 +379,11 @@ def rooms_menu(uid, building_key):
         markup.add(r)
     markup.add(t(uid, "back"))
     return markup, rooms
+
+def back_only_with_no_exist_menu(uid):
+    markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add(t(uid, "no_exist"), t(uid, "back"))
+    return markup
 
 def back_only_menu(uid):
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -782,7 +793,7 @@ def handle_message(message):
                     bot.send_message(message.chat.id, t(uid, "choose_building"), reply_markup=buildings_menu(uid))
                 elif data_type == "price":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_price"), reply_markup=back_only_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_price"), reply_markup=back_only_with_no_exist_menu(uid))
                 elif data_type == "alert":
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
@@ -809,11 +820,14 @@ def handle_message(message):
                 building_label = state.get("building_label", "")
                 user_state[uid]["room"] = f"{building_label}: {text}"
                 user_state[uid]["step"] = "enter_time"
-                bot.send_message(message.chat.id, t(uid, "enter_time"), reply_markup=back_only_menu(uid))
+                bot.send_message(message.chat.id, t(uid, "enter_time"), reply_markup=back_only_with_no_exist_menu(uid))
                 return
 
             if step == "enter_time":
-                user_state[uid]["time_val"] = text
+                if text == t(uid, "no_exist"):
+                    user_state[uid]["time_val"] = t(uid, "no_exist")
+                else:
+                    user_state[uid]["time_val"] = text
                 user_state[uid]["step"] = "enter_date"
                 bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
                 return
@@ -824,13 +838,13 @@ def handle_message(message):
                 data_type = state.get("data_type")
                 if data_type == "alert":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_alert"), reply_markup=back_only_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_alert"), reply_markup=back_only_with_no_exist_menu(uid))
                 elif data_type == "task":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_task"), reply_markup=back_only_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_task"), reply_markup=back_only_with_no_exist_menu(uid))
                 elif data_type == "summary":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, "أدخل نص الملخص:", reply_markup=back_only_menu(uid))
+                    bot.send_message(message.chat.id, "أدخل نص الملخص:", reply_markup=back_only_with_no_exist_menu(uid))
                 elif data_type == "lecture":
                     # حفظ المحاضرة
                     subject = state.get("subject")
@@ -848,6 +862,8 @@ def handle_message(message):
                 subject = state.get("subject")
                 date = state.get("date", "")
                 data_type = state.get("data_type")
+                if text == t(uid, "no_exist"):
+                    text = t(uid, "no_exist")
 
                 if data_type == "price":
                     # سعر الملزمة - ابحث في أي صف لهذه المادة
@@ -1007,7 +1023,9 @@ def handle_message(message):
         elif text == t(uid, "tasks"):
             last_date = get_last_date(data, 3)
             if not last_date:
-                bot.send_message(message.chat.id, t(uid, "no_tasks"), reply_markup=main_menu(uid, admin=admin))
+                has_any = any(safe_get(r, 1) for r in data)
+                msg = t(uid, "no_exist") + " 📝" if has_any else t(uid, "unknown") + " 📝"
+                bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin))
                 return
             rows = [r for r in data if parse_date(safe_get(r, 0)) == last_date and get_text(safe_get(r, 3))]
             day = get_day_name(last_date, uid)
@@ -1024,7 +1042,9 @@ def handle_message(message):
                 if s and p and s not in seen:
                     seen[s] = p
             if not seen:
-                bot.send_message(message.chat.id, t(uid, "no_prices"), reply_markup=main_menu(uid, admin=admin))
+                has_any = any(safe_get(r, 1) for r in data)
+                msg = t(uid, "no_exist") + " 💰" if has_any else t(uid, "unknown") + " 💰"
+                bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin))
                 return
             response = "💰 *" + ("أسعار الملازم" if user_lang.get(uid, "ar") == "ar" else "Book Prices") + ":*\n" + "─" * 25 + "\n"
             for s, p in seen.items():
