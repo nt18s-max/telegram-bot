@@ -56,7 +56,7 @@ LANG = {
     "ar": {
         "subjects": "📚 المواد", "schedule": "🕐 أوقات المحاضرات", "tasks": "📝 التكاليف",
         "prices": "💰 أسعار الملازم", "alerts": "⚠️ تنبيهات", "back": "🔙 العودة",
-        "upload_file": "📤 رفع ملف", "upload_help": "📹 رفع تعليمات البوت", "broadcast": "📢 إرسال إشعار",
+        "upload_file": "📤 رفع ملف", "upload_help": "📹 رفع التعليمات", "broadcast": "📢 إرسال إشعار",
         "add_data": "➕ إضافة بيانات",
         "choose_subject": "اختر المادة:", "choose_option": "ماذا تحتاج؟", "choose_date": "📅 اختر التاريخ:",
         "no_data": "لا توجد بيانات", "error": "❌ حدث خطأ، حاول مرة أخرى.", "choose_menu": "❓ اختر من القائمة.",
@@ -78,7 +78,7 @@ LANG = {
         "add_summary": "📖 إضافة ملخص نصي", "add_price": "💰 إضافة سعر ملزمة", "add_alert": "⚠️ إضافة تنبيه",
         "choose_building": "اختر المبنى:", "building_old": "🏛 القديم", "building_arts": "🏫 الاداب",
         "choose_room": "اختر القاعة:", "enter_time": "أدخل وقت المحاضرة:\nمثال: 8:00 - 9:30",
-        "enter_date": "📅 أدخل التاريخ:\nمثال: 23/02/2026",
+        "enter_date": "📅 أدخل التاريخ:",
         "enter_task": "أدخل نص التكليف:", "enter_price": "أدخل سعر الملزمة:", "enter_alert": "أدخل نص التنبيه:",
         "data_saved": "✅ تم حفظ البيانات بنجاح!", "data_error": "❌ حدث خطأ في حفظ البيانات.",
         "no_rooms": "⚠️ لا توجد قاعات لهذا المبنى.",
@@ -88,11 +88,12 @@ LANG = {
         "subject_options_summary": "📖 الملخص", "subject_options_alerts": "⚠️ تنبيهات",
         "task_type": "📝 تكليف", "summary_type": "📖 ملخص",
         "label_time": "🕐 الوقت", "label_task": "📝 التكليف", "label_summary": "📖 الملخص", "label_alert": "⚠️ التنبيه",
+        "no_schedule": "لا توجد أوقات محاضرات لـ", "no_tasks_subj": "لا توجد تكاليف لـ", "no_summary": "لا توجد ملخصات لـ", "no_alerts_subj": "لا توجد تنبيهات لـ",
     },
     "en": {
         "subjects": "📚 Subjects", "schedule": "🕐 Schedule", "tasks": "📝 Tasks",
         "prices": "💰 Book Prices", "alerts": "⚠️ Alerts", "back": "🔙 Back",
-        "upload_file": "📤 Upload File", "upload_help": "📹 Upload Tutorial", "broadcast": "📢 Send Notification",
+        "upload_file": "📤 Upload File", "upload_help": "📹 Upload Tutorials", "broadcast": "📢 Send Notification",
         "add_data": "➕ Add Data",
         "choose_subject": "Choose subject:", "choose_option": "What do you need?", "choose_date": "📅 Choose date:",
         "no_data": "No data available", "error": "❌ An error occurred, try again.", "choose_menu": "❓ Choose from the menu.",
@@ -114,7 +115,7 @@ LANG = {
         "add_summary": "📖 Add Text Summary", "add_price": "💰 Add Book Price", "add_alert": "⚠️ Add Alert",
         "choose_building": "Choose building:", "building_old": "🏛 Old Building", "building_arts": "🏫 Arts Building",
         "choose_room": "Choose room:", "enter_time": "Enter lecture time:\nExample: 8:00 - 9:30",
-        "enter_date": "📅 Enter date:\nExample: 23/02/2026",
+        "enter_date": "📅 Enter date:",
         "enter_task": "Enter task text:", "enter_price": "Enter book price:", "enter_alert": "Enter alert text:",
         "data_saved": "✅ Data saved successfully!", "data_error": "❌ Error saving data.",
         "no_rooms": "⚠️ No rooms for this building.",
@@ -124,6 +125,7 @@ LANG = {
         "subject_options_summary": "📖 Summary", "subject_options_alerts": "⚠️ Alerts",
         "task_type": "📝 Task", "summary_type": "📖 Summary",
         "label_time": "🕐 Time", "label_task": "📝 Task", "label_summary": "📖 Summary", "label_alert": "⚠️ Alert",
+        "no_schedule": "No schedule for", "no_tasks_subj": "No tasks for", "no_summary": "No summaries for", "no_alerts_subj": "No alerts for",
     }
 }
 
@@ -398,6 +400,10 @@ def get_data():
         print(f"خطأ في جلب البيانات: {e}")
         return []
 
+def send_today_date(chat_id):
+    today = datetime.now().strftime("%d/%m/%Y")
+    bot.send_message(chat_id, f"`{today}`", parse_mode="Markdown")
+
 def save_file_to_cell(date, subject, col, file_id):
     try:
         rows = sheet.get_all_values()
@@ -484,9 +490,19 @@ def start_message(message):
     if not check_user(message):
         bot.send_message(message.chat.id, rejection)
         return
-    user_state.pop(message.from_user.id, None)
-    bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
+    uid = message.from_user.id
+    user_state.pop(uid, None)
+    welcome, _, _ = get_settings()
+    bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=is_admin(message)))
+
+@bot.message_handler(commands=['language'])
+def language_command(message):
+    _, rejection, _ = get_settings()
+    if not check_user(message):
+        bot.send_message(message.chat.id, rejection)
+        return
     user_state[message.from_user.id] = {"choosing_lang": True}
+    bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
 
 # ----- /help -----
 @bot.message_handler(commands=['help'])
@@ -717,6 +733,7 @@ def handle_message(message):
                 user_state[uid]["file_type"] = text
                 user_state[uid]["step"] = "choose_date"
                 bot.send_message(message.chat.id, t(uid, "enter_date"), parse_mode="Markdown")
+                send_today_date(message.chat.id)
                 return
             if step == "choose_date":
                 date = parse_date(text)
@@ -915,7 +932,14 @@ def handle_message(message):
                     if (get_text(safe_get(r, col)) or get_file_id(safe_get(r, col))) and safe_get(r, 0)
                 ))
                 if not dates:
-                    bot.send_message(message.chat.id, f"لا توجد بيانات لـ *{subj}*",
+                    no_data_map = {
+                        t(uid, "subject_options_schedule"): t(uid, "no_schedule"),
+                        t(uid, "subject_options_tasks"): t(uid, "no_tasks_subj"),
+                        t(uid, "subject_options_summary"): t(uid, "no_summary"),
+                        t(uid, "subject_options_alerts"): t(uid, "no_alerts_subj"),
+                    }
+                    no_msg = no_data_map.get(text, "لا توجد بيانات لـ")
+                    bot.send_message(message.chat.id, f"{no_msg} *{subj}*",
                                      parse_mode="Markdown", reply_markup=subject_options_menu(uid))
                     return
                 user_state[uid] = {"subject": subj, "action": text, "awaiting_date": True, "col": col, "dates": dates}
