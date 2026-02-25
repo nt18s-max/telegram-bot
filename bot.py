@@ -66,7 +66,7 @@ LANG = {
         "help_title_user": "📖 تعليمات المستخدم", "help_title_admin": "📖 تعليمات الأدمن",
         "send_now": "📢 اكتب رسالة الإشعار:", "broadcast_done": "✅ تم الإرسال!",
         "broadcast_open": "⚠️ البوت مفتوح للكل، لا يمكن إرسال إشعار جماعي بدون قائمة معرفات.",
-        "choose_audience": "👥 هذه التعليمات لمن؟", "send_file_now": "📎 أرسل الملف أو اكتب النص:",
+        "choose_audience": "👥 هذه التعليمات لمن؟", "send_file_now": "📎 أرسل الملف:",
         "no_lectures": "📭 لا توجد محاضرات.", "no_tasks": "✅ لا يوجد تكاليف.",
         "no_prices": "لا توجد أسعار مسجلة.", "no_alerts": "✅ لا توجد تنبيهات.",
         "choose_data_type": "اختر نوع البيانات للإضافة:",
@@ -119,7 +119,7 @@ LANG = {
         "help_title_user": "📖 User Tutorials", "help_title_admin": "📖 Admin Tutorials",
         "send_now": "📢 Write your notification:", "broadcast_done": "✅ Sent!",
         "broadcast_open": "⚠️ Bot is open to all, cannot broadcast without ID list.",
-        "choose_audience": "👥 Who is this for?", "send_file_now": "📎 Send the file or type the text:",
+        "choose_audience": "👥 Who is this for?", "send_file_now": "📎 Send the file:",
         "no_lectures": "📭 No lectures.", "no_tasks": "✅ No tasks.",
         "no_prices": "No prices recorded.", "no_alerts": "✅ No alerts.",
         "choose_data_type": "Choose data type to add:",
@@ -438,7 +438,7 @@ def notify_owners_new_request(requester_id, requester_name):
 # ----- قوائم -----
 def lang_menu():
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add("🇸🇦 العربية", "🇬🇧 English")
+    markup.add("🇾🇪 العربية", "🇬🇧 English")
     return markup
 
 def main_menu(uid, admin=False, owner=False):
@@ -588,6 +588,27 @@ def handle_approval(call):
 
     bot.answer_callback_query(call.id)
 
+def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
+    uids, open_all = get_all_user_ids()
+    if open_all:
+        bot.send_message(chat_id, t(uid, "broadcast_open"))
+        return
+    success = fail = 0
+    for user_id in uids:
+        try:
+            if text_msg:
+                bot.send_message(user_id, "📢 *إشعار:*\n\n" + text_msg, parse_mode="Markdown")
+            if file_id:
+                if file_type == "photo": bot.send_photo(user_id, file_id)
+                elif file_type == "audio": bot.send_audio(user_id, file_id)
+                elif file_type == "video": bot.send_video(user_id, file_id)
+                else: bot.send_document(user_id, file_id)
+            success += 1
+        except:
+            fail += 1
+    bot.send_message(chat_id, t(uid, 'broadcast_done') + f"\n✅ {success} | ❌ {fail}",
+                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+
 # ----- /start -----
 @bot.message_handler(commands=['start'])
 def start_message(message):
@@ -662,6 +683,14 @@ def handle_file(message):
         user_state.pop(uid, None)
         return
 
+    if state.get("broadcasting") and state.get("step") == "waiting_file_or_send":
+        user_state[uid]["broadcast_file_id"] = file_id
+        user_state[uid]["broadcast_file_type"] = ftype
+        _do_broadcast(message.chat.id, uid, is_admin(message), is_owner(message),
+                      state.get("broadcast_text", ""), file_id, ftype)
+        user_state.pop(uid, None)
+        return
+
     if state.get("uploading") and state.get("step") == "waiting_file":
         user_state[uid]["file_id"] = file_id
         user_state[uid]["step"] = "choose_subject"
@@ -697,8 +726,8 @@ def handle_message(message):
 
     try:
         # ===== اختيار اللغة =====
-        if state.get("choosing_lang") or text in ["🇸🇦 العربية", "🇬🇧 English"]:
-            if text == "🇸🇦 العربية": user_lang[uid] = "ar"
+        if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
+            if text == "🇾🇪 العربية": user_lang[uid] = "ar"
             elif text == "🇬🇧 English": user_lang[uid] = "en"
             else:
                 bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
@@ -809,8 +838,10 @@ def handle_message(message):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
                 return
-            user_state[uid] = {"broadcasting": True}
-            bot.send_message(message.chat.id, t(uid, "send_now"), reply_markup=back_only_menu(uid))
+            user_state[uid] = {"broadcasting": True, "step": "waiting_text"}
+            markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+            markup.add("📤 إرسال بدون نص", t(uid, "back"))
+            bot.send_message(message.chat.id, "اكتب نص الإشعار أو اضغط إرسال بدون نص:", reply_markup=markup)
             return
 
         if state.get("broadcasting"):
