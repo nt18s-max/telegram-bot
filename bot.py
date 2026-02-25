@@ -157,6 +157,8 @@ LANG = {
 }
 
 def t(uid, key):
+    if uid not in user_lang:
+        user_lang[uid] = get_user_lang_from_sheet(uid)
     lang = user_lang.get(uid, "ar")
     return LANG[lang].get(key, LANG["ar"].get(key, key))
 
@@ -212,7 +214,7 @@ def get_rooms(building):
     except:
         return []
 
-# ----- صلاحيات - الشيت الثاني: A=الاسم B=ID C=مسموح D=ادمن E=مالك -----
+# ----- صلاحيات - الشيت الثاني: A=الاسم B=ID C=مسموح D=ادمن E=مالك F=English -----
 def get_users():
     try:
         rows = users_sheet.get_all_values()
@@ -241,6 +243,32 @@ def get_users():
         print(f"خطأ في جلب المستخدمين: {e}")
         return [], [], [], False, False
 
+def get_user_lang_from_sheet(uid):
+    """يقرأ اللغة من عمود F في الشيت"""
+    try:
+        rows = users_sheet.get_all_values()
+        for row in rows[1:]:
+            uid_str = row[1].strip() if len(row) > 1 else ""
+            if uid_str.isdigit() and int(uid_str) == uid:
+                lang_val = row[5].strip().upper() if len(row) > 5 else "FALSE"
+                return "en" if lang_val == "TRUE" else "ar"
+        return "ar"
+    except:
+        return "ar"
+
+def save_user_lang_to_sheet(uid, lang):
+    """يحفظ اللغة في عمود F"""
+    try:
+        rows = users_sheet.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            uid_str = row[1].strip() if len(row) > 1 else ""
+            if uid_str.isdigit() and int(uid_str) == uid:
+                users_sheet.update_cell(i, 6, "TRUE" if lang == "en" else "FALSE")
+                return True
+        return False
+    except:
+        return False
+
 def get_all_user_ids():
     try:
         rows = users_sheet.get_all_values()
@@ -255,6 +283,20 @@ def get_all_user_ids():
         return uids, open_all
     except:
         return [], False
+
+def get_all_registered_uids():
+    """يجلب كل المعرفات المسجلة بما فيهم المضافون تلقائياً"""
+    try:
+        rows = users_sheet.get_all_values()
+        uids = []
+        for row in rows[1:]:
+            if not row: continue
+            uid_str = row[1].strip() if len(row) > 1 else ""
+            if uid_str.isdigit():
+                uids.append(int(uid_str))
+        return uids
+    except:
+        return []
 
 def get_owner_ids():
     _, _, owners, _, _ = get_users()
@@ -274,12 +316,29 @@ def is_owner_id(uid):
 def is_owner(message):
     return is_owner_id(message.from_user.id)
 
-def add_user_to_sheet(name, uid):
+def add_user_to_sheet(name, uid, auto=False):
     try:
-        users_sheet.append_row([name, str(uid), "TRUE", "FALSE", "FALSE"])
+        display_name = f"🆕 {name}" if auto else name
+        users_sheet.append_row([display_name, str(uid), "TRUE", "FALSE", "FALSE", "FALSE"])
         return True
     except:
         return False
+
+def auto_register_user(message):
+    """يسجل المستخدم تلقائياً إذا البوت مفتوح للكل"""
+    try:
+        _, _, _, open_all, _ = get_users()
+        if not open_all:
+            return
+        rows = users_sheet.get_all_values()
+        uid_str = str(message.from_user.id)
+        for row in rows[1:]:
+            if row[1].strip() == uid_str:
+                return  # موجود مسبقاً
+        name = message.from_user.full_name or "مجهول"
+        add_user_to_sheet(name, message.from_user.id, auto=True)
+    except:
+        pass
 
 def update_user_role(uid, make_admin):
     try:
@@ -591,8 +650,10 @@ def handle_approval(call):
 def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
     uids, open_all = get_all_user_ids()
     if open_all:
-        bot.send_message(chat_id, t(uid, "broadcast_open"))
-        return
+        uids = get_all_registered_uids()
+        if not uids:
+            bot.send_message(chat_id, t(uid, "broadcast_open"))
+            return
     success = fail = 0
     for user_id in uids:
         try:
@@ -659,6 +720,7 @@ def handle_file(message):
         bot.send_message(message.chat.id, rejection)
         return
     uid = message.from_user.id
+    auto_register_user(message)
     if not (is_admin(message) or is_owner(message)):
         bot.send_message(message.chat.id, t(uid, "admin_only"))
         return
@@ -718,6 +780,7 @@ def handle_message(message):
         return
 
     uid = message.from_user.id
+    auto_register_user(message)
     text = message.text
     state = user_state.get(uid, {})
     admin = is_admin(message)
@@ -733,6 +796,7 @@ def handle_message(message):
                 bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
                 return
             user_state.pop(uid, None)
+            save_user_lang_to_sheet(uid, user_lang.get(uid, "ar"))
             welcome, _, _ = get_settings()
             bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
@@ -1129,6 +1193,17 @@ def handle_message(message):
                     user_state[uid]["step"] = "enter_new_val"
                     bot.send_message(message.chat.id, t(uid, "enter_new_val"), reply_markup=back_only_menu(uid))
                 elif text == t(uid, "delete_btn"):
+                    user_state[uid]["step"] = "confirm_delete"
+                    current = state.get("current_val", "")
+                    markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+                    markup.add("✅ نعم، احذف", "❌ لا، إلغاء")
+                    bot.send_message(message.chat.id,
+                                     "⚠️ هل أنت متأكد من حذف:\n*" + current + "*؟",
+                                     parse_mode="Markdown", reply_markup=markup)
+                return
+
+            if step == "confirm_delete":
+                if text == "✅ نعم، احذف":
                     subj = state.get("subject")
                     date = state.get("date", "")
                     dtype = state.get("data_type")
@@ -1146,6 +1221,9 @@ def handle_message(message):
                         else:
                             bot.send_message(message.chat.id, t(uid, "error"))
                     user_state.pop(uid, None)
+                elif text == "❌ لا، إلغاء":
+                    user_state[uid]["step"] = "choose_action"
+                    bot.send_message(message.chat.id, "تم الإلغاء.", reply_markup=edit_action_menu(uid))
                 return
 
             if step == "enter_new_val":
