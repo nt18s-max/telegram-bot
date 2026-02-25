@@ -265,7 +265,7 @@ def help_message(message):
         return
     _, _, videos = get_settings()
     if not videos:
-        bot.send_message(message.chat.id, "📭 لا توجد فيديوهات مساعدة حالياً.")
+        bot.send_message(message.chat.id, "📭 لا توجد مواد مساعدة حالياً.")
         return
     bot.send_message(message.chat.id, "🎬 *فيديوهات المساعدة:*", parse_mode="Markdown")
     for item in videos:
@@ -325,8 +325,10 @@ def handle_file(message):
             ftype = "audio"
         else:
             ftype = "document"
+        type_names = {"video": "الفيديو", "photo": "الصورة", "audio": "الصوت", "document": "الملف"}
+        type_name = type_names.get(ftype, "الملف")
         if save_help_video(file_id, ftype):
-            bot.send_message(message.chat.id, "✅ تم حفظ فيديو المساعدة!",
+            bot.send_message(message.chat.id, f"✅ تم حفظ {type_name}!",
                              reply_markup=main_menu(admin=True))
         else:
             bot.send_message(message.chat.id, "❌ حدث خطأ في حفظ الفيديو.",
