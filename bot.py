@@ -507,10 +507,6 @@ def language_command(message):
 # ----- /help -----
 @bot.message_handler(commands=['help'])
 def help_message(message):
-    _, rejection, _ = get_settings()
-    if not check_user(message):
-        bot.send_message(message.chat.id, rejection)
-        return
     uid = message.from_user.id
     admin = is_admin(message)
     if admin:
