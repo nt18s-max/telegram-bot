@@ -1434,10 +1434,14 @@ def handle_message(message):
 
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=dates_menu(uid, dates))
             for fid in file_ids:
-                try: bot.send_document(message.chat.id, fid)
-                except:
-                    try: bot.send_photo(message.chat.id, fid)
-                    except: pass
+                sent = False
+                for sender in [bot.send_document, bot.send_photo, bot.send_video, bot.send_audio, bot.send_voice]:
+                    try:
+                        sender(message.chat.id, fid)
+                        sent = True
+                        break
+                    except:
+                        continue
             return
 
         # ===== القائمة الرئيسية =====
