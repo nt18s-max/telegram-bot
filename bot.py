@@ -450,7 +450,7 @@ def save_text_to_cell(date, subject, col, text_val):
             if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
                 sheet.update_cell(i, col + 1, text_val)
                 return True
-        new_row = [""] * 7
+        new_row = [""] * 8
         new_row[0] = date
         new_row[1] = subject
         new_row[col] = text_val
@@ -458,6 +458,26 @@ def save_text_to_cell(date, subject, col, text_val):
         return True
     except Exception as e:
         print(f"خطأ في حفظ البيانات: {e}")
+        return False
+
+def save_lecture(date, subject, time_val, room):
+    """يحفظ وقت ومكان المحاضرة في نفس السطر دفعة واحدة"""
+    try:
+        rows = sheet.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
+                sheet.update_cell(i, 3, time_val)
+                sheet.update_cell(i, 4, room)
+                return True
+        new_row = [""] * 8
+        new_row[0] = date
+        new_row[1] = subject
+        new_row[2] = time_val
+        new_row[3] = room
+        sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        print(f"خطأ في حفظ المحاضرة: {e}")
         return False
 
 def delete_cell(date, subject, col):
@@ -1161,9 +1181,7 @@ def handle_message(message):
                     subject = state.get("subject")
                     room = state.get("room", "")
                     time_val = state.get("time_val", "")
-                    ok1 = save_text_to_cell(date, subject, 2, time_val)
-                    if room: save_text_to_cell(date, subject, 3, room)
-                    if ok1:
+                    if save_lecture(date, subject, time_val, room):
                         bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
                         bot.send_message(message.chat.id, t(uid, "data_error"))
