@@ -1201,6 +1201,9 @@ def handle_message(message):
                 user_state.pop(uid, None)
                 return
 
+            # fallback - أعد عرض القائمة الحالية
+            return
+
         # ===== تعديل/حذف بيانات =====
         if text == t(uid, "edit_data"):
             if not (admin or owner):
@@ -1327,6 +1330,9 @@ def handle_message(message):
                         bot.send_message(message.chat.id, t(uid, "error"))
                 user_state.pop(uid, None)
                 return
+
+            # fallback
+            return
 
         # ===== المواد =====
         if text == t(uid, "subjects"):
