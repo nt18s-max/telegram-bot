@@ -43,6 +43,7 @@ except Exception as e:
 
 user_state = {}
 user_lang = {}
+pending_requests = set()  # يتتبع من أرسل طلب انضمام مسبقاً
 
 DAYS_AR = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
 DAYS_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
@@ -157,10 +158,13 @@ LANG = {
 }
 
 def t(uid, key):
-    if uid not in user_lang:
-        user_lang[uid] = get_user_lang_from_sheet(uid)
     lang = user_lang.get(uid, "ar")
     return LANG[lang].get(key, LANG["ar"].get(key, key))
+
+def load_user_lang(uid):
+    """يقرأ اللغة من الشيت مرة واحدة ويحفظها في الذاكرة"""
+    if uid not in user_lang:
+        user_lang[uid] = get_user_lang_from_sheet(uid)
 
 # ----- قراءة الإعدادات -----
 def get_settings():
@@ -627,6 +631,7 @@ def handle_approval(call):
         requester_id = int(parts[1])
         requester_name = parts[2] if len(parts) > 2 else "مستخدم"
         if add_user_to_sheet(requester_name, requester_id):
+            pending_requests.discard(requester_id)
             try:
                 bot.send_message(requester_id, LANG["ar"]["approved"])
             except:
@@ -638,6 +643,7 @@ def handle_approval(call):
 
     elif call.data.startswith("reject_"):
         requester_id = int(call.data.split("_")[1])
+        pending_requests.discard(requester_id)
         try:
             bot.send_message(requester_id, LANG["ar"]["rejected"])
         except:
@@ -650,9 +656,12 @@ def handle_approval(call):
 def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
     uids, open_all = get_all_user_ids()
     if open_all:
-        uids = get_all_registered_uids()
+        registered = get_all_registered_uids()
+        if registered:
+            uids = registered
+        # إذا لم يكن أحد مسجلاً نرسل لمن في القائمة العادية فقط
         if not uids:
-            bot.send_message(chat_id, t(uid, "broadcast_open"))
+            bot.send_message(chat_id, "⚠️ لا يوجد مستخدمون مسجلون بعد.")
             return
     success = fail = 0
     for user_id in uids:
@@ -662,6 +671,7 @@ def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
             if file_id:
                 if file_type == "photo": bot.send_photo(user_id, file_id)
                 elif file_type == "audio": bot.send_audio(user_id, file_id)
+                elif file_type == "voice": bot.send_voice(user_id, file_id)
                 elif file_type == "video": bot.send_video(user_id, file_id)
                 else: bot.send_document(user_id, file_id)
             success += 1
@@ -676,11 +686,12 @@ def start_message(message):
     _, rejection, _ = get_settings()
     uid = message.from_user.id
     if not check_user(message):
-        # إرسال طلب انضمام للمالك
         owners = get_owner_ids()
         if owners:
-            name = message.from_user.full_name or "مجهول"
-            notify_owners_new_request(uid, name)
+            if uid not in pending_requests:
+                name = message.from_user.full_name or "مجهول"
+                notify_owners_new_request(uid, name)
+                pending_requests.add(uid)
             bot.send_message(message.chat.id, LANG["ar"]["pending"])
         else:
             bot.send_message(message.chat.id, rejection)
@@ -698,7 +709,9 @@ def language_command(message):
     if not check_user(message):
         bot.send_message(message.chat.id, rejection)
         return
-    user_state[message.from_user.id] = {"choosing_lang": True}
+    uid = message.from_user.id
+    load_user_lang(uid)
+    user_state[uid] = {"choosing_lang": True}
     bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
 
 # ----- /help -----
@@ -713,13 +726,14 @@ def help_message(message):
         send_help_materials(message.chat.id, uid, "user")
 
 # ----- استقبال الملفات -----
-@bot.message_handler(content_types=['document', 'photo', 'video', 'audio'])
+@bot.message_handler(content_types=['document', 'photo', 'video', 'audio', 'voice'])
 def handle_file(message):
     _, rejection, _ = get_settings()
     if not check_user(message):
         bot.send_message(message.chat.id, rejection)
         return
     uid = message.from_user.id
+    load_user_lang(uid)
     auto_register_user(message)
     if not (is_admin(message) or is_owner(message)):
         bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -731,6 +745,7 @@ def handle_file(message):
     elif message.photo: file_id, ftype = message.photo[-1].file_id, "photo"
     elif message.video: file_id, ftype = message.video.file_id, "video"
     elif message.audio: file_id, ftype = message.audio.file_id, "audio"
+    elif message.voice: file_id, ftype = message.voice.file_id, "voice"
     else: return
 
     if state.get("uploading_help") and state.get("step") == "waiting_file_help":
@@ -745,7 +760,7 @@ def handle_file(message):
         user_state.pop(uid, None)
         return
 
-    if state.get("broadcasting") and state.get("step") == "waiting_file_or_send":
+    if state.get("broadcasting"):
         user_state[uid]["broadcast_file_id"] = file_id
         user_state[uid]["broadcast_file_type"] = ftype
         _do_broadcast(message.chat.id, uid, is_admin(message), is_owner(message),
@@ -769,8 +784,10 @@ def handle_message(message):
     if not check_user(message):
         owners = get_owner_ids()
         if owners:
-            name = message.from_user.full_name or "مجهول"
-            notify_owners_new_request(message.from_user.id, name)
+            if message.from_user.id not in pending_requests:
+                name = message.from_user.full_name or "مجهول"
+                notify_owners_new_request(message.from_user.id, name)
+                pending_requests.add(message.from_user.id)
             bot.send_message(message.chat.id, LANG["ar"]["pending"])
         else:
             bot.send_message(message.chat.id, rejection)
@@ -780,6 +797,7 @@ def handle_message(message):
         return
 
     uid = message.from_user.id
+    load_user_lang(uid)
     auto_register_user(message)
     text = message.text
     state = user_state.get(uid, {})
@@ -913,21 +931,27 @@ def handle_message(message):
             return
 
         if state.get("broadcasting"):
-            uids, open_all = get_all_user_ids()
-            if open_all:
-                bot.send_message(message.chat.id, t(uid, "broadcast_open"))
-            else:
-                success = fail = 0
-                for user_id in uids:
-                    try:
-                        bot.send_message(user_id, f"📢 *إشعار:*\n\n{text}", parse_mode="Markdown")
-                        success += 1
-                    except:
-                        fail += 1
-                bot.send_message(message.chat.id, f"{t(uid, 'broadcast_done')}\n✅ {success} | ❌ {fail}",
-                                 reply_markup=main_menu(uid, admin=admin, owner=owner))
-            user_state.pop(uid, None)
-            return
+            step = state.get("step", "waiting_text")
+            if step == "waiting_text":
+                if text == "📤 إرسال بدون نص":
+                    user_state[uid]["broadcast_text"] = ""
+                    user_state[uid]["step"] = "waiting_file_or_send"
+                    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+                    markup.add("📤 إرسال الآن", t(uid, "back"))
+                    bot.send_message(message.chat.id, "أرسل ملفاً أو اضغط إرسال الآن:", reply_markup=markup)
+                else:
+                    user_state[uid]["broadcast_text"] = text
+                    user_state[uid]["step"] = "waiting_file_or_send"
+                    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+                    markup.add("📤 إرسال الآن", t(uid, "back"))
+                    bot.send_message(message.chat.id, "أرسل ملفاً (اختياري) أو اضغط إرسال الآن:", reply_markup=markup)
+                return
+            if step == "waiting_file_or_send" and text == "📤 إرسال الآن":
+                _do_broadcast(message.chat.id, uid, admin, owner,
+                              state.get("broadcast_text", ""),
+                              state.get("broadcast_file_id"), state.get("broadcast_file_type"))
+                user_state.pop(uid, None)
+                return
 
         # ===== رفع التعليمات =====
         if text == t(uid, "upload_help"):
