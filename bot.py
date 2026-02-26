@@ -1045,7 +1045,7 @@ def handle_message(message):
                 bot.send_message(message.chat.id, f"📌 *{text}*", parse_mode="Markdown", reply_markup=file_type_menu(uid))
                 return
             if step == "choose_type" and text in [t(uid, "task_type"), t(uid, "summary_type")]:
-                col = 3 if text == t(uid, "task_type") else 5
+                col = 4 if text == t(uid, "task_type") else 6
                 user_state[uid]["col"] = col
                 user_state[uid]["file_type"] = text
                 user_state[uid]["step"] = "choose_date"
@@ -1161,8 +1161,9 @@ def handle_message(message):
                     subject = state.get("subject")
                     room = state.get("room", "")
                     time_val = state.get("time_val", "")
-                    val = f"{room} | {time_val}" if room else time_val
-                    if save_text_to_cell(date, subject, 2, val):
+                    ok1 = save_text_to_cell(date, subject, 2, time_val)
+                    if room: save_text_to_cell(date, subject, 3, room)
+                    if ok1:
                         bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
                         bot.send_message(message.chat.id, t(uid, "data_error"))
@@ -1179,18 +1180,18 @@ def handle_message(message):
                     updated = False
                     for i, row in enumerate(rows[1:], start=2):
                         if safe_get(row, 1) == subject:
-                            sheet.update_cell(i, 5, val)
+                            sheet.update_cell(i, 6, val)
                             updated = True
                             break
                     if not updated:
-                        sheet.append_row(["", subject, "", "", val, "", ""], value_input_option="USER_ENTERED")
+                        sheet.append_row(["", subject, "", "", "", val, "", ""], value_input_option="USER_ENTERED")
                     bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "task":
-                    ok = save_text_to_cell(date, subject, 3, val)
+                    ok = save_text_to_cell(date, subject, 4, val)
                     bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
                                      reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "summary":
-                    ok = save_text_to_cell(date, subject, 5, val)
+                    ok = save_text_to_cell(date, subject, 6, val)
                     bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
                                      reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "alert":
@@ -1214,7 +1215,7 @@ def handle_message(message):
             _, subjects_list = subjects_menu(uid)
             edit_types = {t(uid, k): v for k, v in [("edit_lecture","lecture"),("edit_task","task"),
                           ("edit_summary","summary"),("edit_price","price"),("edit_alert","alert")]}
-            col_map_edit = {"lecture": 2, "task": 3, "summary": 5, "price": 4, "alert": 6}
+            col_map_edit = {"lecture": 2, "task": 4, "summary": 6, "price": 5, "alert": 7}
 
             if step == "choose_type" and text in edit_types:
                 user_state[uid]["data_type"] = edit_types[text]
@@ -1230,7 +1231,7 @@ def handle_message(message):
                     # عرض السعر الحالي مباشرة
                     data = get_data()
                     rows = [r for r in data if safe_get(r, 1) == text]
-                    current = next((get_text(safe_get(r, 4)) for r in rows if safe_get(r, 4)), "")
+                    current = next((get_text(safe_get(r, 5)) for r in rows if safe_get(r, 5)), "")
                     user_state[uid]["step"] = "choose_action"
                     user_state[uid]["current_val"] = current
                     user_state[uid]["date"] = ""
@@ -1293,7 +1294,7 @@ def handle_message(message):
                         rows = sheet.get_all_values()
                         for i, row in enumerate(rows[1:], start=2):
                             if safe_get(row, 1) == subj:
-                                sheet.update_cell(i, 5, "")
+                                sheet.update_cell(i, 6, "")
                                 break
                         bot.send_message(message.chat.id, t(uid, "deleted"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
@@ -1316,7 +1317,7 @@ def handle_message(message):
                     rows = sheet.get_all_values()
                     for i, row in enumerate(rows[1:], start=2):
                         if safe_get(row, 1) == subj:
-                            sheet.update_cell(i, 5, text)
+                            sheet.update_cell(i, 6, text)
                             break
                     bot.send_message(message.chat.id, t(uid, "edited"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
@@ -1351,13 +1352,13 @@ def handle_message(message):
 
             if text in subject_opts:
                 if text == t(uid, "subject_options_price"):
-                    price = next((get_text(safe_get(r, 4)) for r in rows if safe_get(r, 4)), None)
+                    price = next((get_text(safe_get(r, 5)) for r in rows if safe_get(r, 5)), None)
                     msg = f"💰 *{subj}*: {price}" if price else f"لا يوجد سعر مسجل لـ *{subj}*"
                     bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=subject_options_menu(uid))
                     return
 
-                col_map = {t(uid, "subject_options_schedule"): 2, t(uid, "subject_options_tasks"): 3,
-                           t(uid, "subject_options_summary"): 5, t(uid, "subject_options_alerts"): 6}
+                col_map = {t(uid, "subject_options_schedule"): 2, t(uid, "subject_options_tasks"): 4,
+                           t(uid, "subject_options_summary"): 6, t(uid, "subject_options_alerts"): 7}
                 col = col_map[text]
                 dates = list(dict.fromkeys(
                     parse_date(safe_get(r, 0)) for r in rows
@@ -1392,7 +1393,9 @@ def handle_message(message):
                          t(uid, "subject_options_summary"): t(uid, "label_summary"),
                          t(uid, "subject_options_alerts"): t(uid, "label_alert")}
             label = label_map.get(action, "")
-            response = f"*{subj}* — {text}\n" + "─" * 25 + "\n"
+            day = get_day_name(text, uid)
+            day_str = f" ({day})" if day else ""
+            response = f"*{subj}* — {text}{day_str}\n" + "─" * 25 + "\n"
             file_ids = []
 
             for row in matched:
@@ -1431,7 +1434,7 @@ def handle_message(message):
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
 
         elif text == t(uid, "tasks"):
-            last_date = get_last_date(data, 3)
+            last_date = get_last_date(data, 4)
             if not last_date:
                 has_any = any(safe_get(r, 1) for r in data)
                 msg = t(uid, "no_exist") + " 📝" if has_any else t(uid, "unknown") + " 📝"
@@ -1448,7 +1451,7 @@ def handle_message(message):
             seen = {}
             for r in data:
                 s = safe_get(r, 1)
-                p = get_text(safe_get(r, 4))
+                p = get_text(safe_get(r, 5))
                 if s and p and s not in seen:
                     seen[s] = p
             if not seen:
@@ -1465,8 +1468,8 @@ def handle_message(message):
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
 
         elif text == t(uid, "alerts"):
-            alerts = [(safe_get(r,1), parse_date(safe_get(r,0)), get_text(safe_get(r,6)))
-                      for r in data if get_text(safe_get(r,6))]
+            alerts = [(safe_get(r,1), parse_date(safe_get(r,0)), get_text(safe_get(r,7)))
+                      for r in data if get_text(safe_get(r,7))]
             if not alerts:
                 bot.send_message(message.chat.id, t(uid, "no_alerts"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
