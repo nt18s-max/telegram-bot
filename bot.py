@@ -848,6 +848,10 @@ def handle_message(message):
                 return
 
             if step == "enter_uid_role":
+                if text == back_btn:
+                    user_state[uid] = {"managing_users": True, "step": "menu"}
+                    bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
+                    return
                 if text.isdigit():
                     user_state[uid]["target_uid"] = int(text)
                     user_state[uid]["step"] = "choose_role"
