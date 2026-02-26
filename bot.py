@@ -1468,12 +1468,22 @@ def handle_message(message):
                 msg = t(uid, "no_exist") + " 📝" if has_any else t(uid, "unknown") + " 📝"
                 bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
-            rows = [r for r in data if parse_date(safe_get(r, 0)) == last_date and get_text(safe_get(r, 3))]
+            rows = [r for r in data if parse_date(safe_get(r, 0)) == last_date and (get_text(safe_get(r, 4)) or get_file_id(safe_get(r, 4)))]
             day = get_day_name(last_date, uid)
             response = f"📝 *{day} — {last_date}:*\n" + "─" * 25 + "\n"
+            task_files = []
             for r in rows:
-                response += f"📌 {safe_get(r,1)}: {get_text(safe_get(r,3))}\n"
+                cell = safe_get(r, 4)
+                val = get_text(cell)
+                fid = get_file_id(cell)
+                if val: response += f"📌 {safe_get(r,1)}: {val}\n"
+                elif fid: response += f"📌 {safe_get(r,1)}: 📎 ملف\n"
+                if fid: task_files.append(fid)
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
+            for fid in task_files:
+                for sender in [bot.send_document, bot.send_photo, bot.send_video, bot.send_audio, bot.send_voice]:
+                    try: sender(message.chat.id, fid); break
+                    except: continue
 
         elif text == t(uid, "prices"):
             seen = {}
