@@ -43,7 +43,22 @@ except Exception as e:
 
 user_state = {}
 user_lang = {}
-pending_requests = set()  # يتتبع من أرسل طلب انضمام مسبقاً
+pending_requests = set()  # يتتبع من أرسل طلب انضمام في هذه الجلسة
+
+def is_pending(uid):
+    """يتحقق إذا المستخدم أرسل طلب من قبل - من الذاكرة أو الشيت"""
+    if uid in pending_requests:
+        return True
+    # تحقق من الشيت - إذا وُجد معرفه بدون إذن وبدون رفض
+    try:
+        rows = users_sheet.get_all_values()
+        uid_str = str(uid)
+        for row in rows[1:]:
+            if row[1].strip() == uid_str:
+                return True  # موجود في الشيت بالفعل
+    except:
+        pass
+    return False
 
 DAYS_AR = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
 DAYS_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
@@ -406,7 +421,8 @@ def get_data():
 
 def send_today_date(chat_id, tomorrow=False):
     d = (datetime.now() + timedelta(days=1) if tomorrow else datetime.now()).strftime("%d/%m/%Y")
-    bot.send_message(chat_id, f"`{d}`", parse_mode="Markdown")
+    label = "📅 مقترح (غداً):" if tomorrow else "📅 مقترح (اليوم):"
+    bot.send_message(chat_id, label + "\n`" + d + "`", parse_mode="Markdown")
 
 def save_file_to_cell(date, subject, col, file_id):
     try:
@@ -457,9 +473,14 @@ def delete_cell(date, subject, col):
 
 def save_help_material(file_id, file_type, audience, note=""):
     try:
-        help_sheet.append_row(["مادة مساعدة", file_id, file_type, audience, note])
+        rows = help_sheet.get_all_values()
+        # أول سطر فارغ من السطر 3 فصاعداً (تجاوز صفي الإعدادات)
+        next_row = max(4, len(rows) + 1)
+        help_sheet.update([[file_id, file_type, audience, note]], f"B{next_row}:E{next_row}")
+        help_sheet.update([["مادة مساعدة"]], f"A{next_row}")
         return True
-    except:
+    except Exception as e:
+        print(f"خطأ في حفظ مادة المساعدة: {e}")
         return False
 
 def send_help_materials(chat_id, uid, audience_filter):
@@ -478,8 +499,9 @@ def send_help_materials(chat_id, uid, audience_filter):
             try:
                 if ftype == "photo": bot.send_photo(chat_id, fid)
                 elif ftype == "audio": bot.send_audio(chat_id, fid)
+                elif ftype == "voice": bot.send_voice(chat_id, fid)
                 elif ftype == "document": bot.send_document(chat_id, fid)
-                elif ftype != "text": bot.send_video(chat_id, fid)
+                elif ftype == "video": bot.send_video(chat_id, fid)
             except:
                 try: bot.send_document(chat_id, fid)
                 except: pass
@@ -601,6 +623,13 @@ def rooms_menu(uid, building_key):
     markup.add(t(uid, "back"))
     return markup, rooms
 
+def lecture_time_menu(uid):
+    markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add("🕐 8:00 - 10:00", "🕐 10:00 - 12:00")
+    markup.add("🕐 12:00 - 14:00", "⏰ توقيت آخر")
+    markup.add(t(uid, "back"))
+    return markup
+
 def back_only_with_no_exist_menu(uid):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add(t(uid, "no_exist"), t(uid, "back"))
@@ -688,7 +717,7 @@ def start_message(message):
     if not check_user(message):
         owners = get_owner_ids()
         if owners:
-            if uid not in pending_requests:
+            if not is_pending(uid):
                 name = message.from_user.full_name or "مجهول"
                 notify_owners_new_request(uid, name)
                 pending_requests.add(uid)
@@ -784,10 +813,11 @@ def handle_message(message):
     if not check_user(message):
         owners = get_owner_ids()
         if owners:
-            if message.from_user.id not in pending_requests:
+            req_uid = message.from_user.id
+            if not is_pending(req_uid):
                 name = message.from_user.full_name or "مجهول"
-                notify_owners_new_request(message.from_user.id, name)
-                pending_requests.add(message.from_user.id)
+                notify_owners_new_request(req_uid, name)
+                pending_requests.add(req_uid)
             bot.send_message(message.chat.id, LANG["ar"]["pending"])
         else:
             bot.send_message(message.chat.id, rejection)
@@ -798,11 +828,13 @@ def handle_message(message):
 
     uid = message.from_user.id
     load_user_lang(uid)
+    # جلب الصلاحيات مرة واحدة فقط
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all = get_users()
+    admin = admin_all or uid in admin_ids
+    owner = uid in owner_ids
     auto_register_user(message)
     text = message.text
     state = user_state.get(uid, {})
-    admin = is_admin(message)
-    owner = is_owner(message)
     back_btn = t(uid, "back")
 
     try:
@@ -823,10 +855,14 @@ def handle_message(message):
         if state.get("viewing_help"):
             if text == t(uid, "view_user_help"):
                 send_help_materials(message.chat.id, uid, "user")
+                user_state.pop(uid, None)
+                bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=main_menu(uid, admin=admin, owner=owner))
             elif text == t(uid, "view_admin_help"):
                 send_help_materials(message.chat.id, uid, "admin")
-            user_state.pop(uid, None)
-            bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                user_state.pop(uid, None)
+                bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=main_menu(uid, admin=admin, owner=owner))
+            else:
+                bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=help_view_menu(uid))
             return
 
         # ===== إدارة المستخدمين (مالك) =====
@@ -1057,7 +1093,7 @@ def handle_message(message):
                     bot.send_message(message.chat.id, t(uid, "choose_building"), reply_markup=buildings_menu(uid))
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_price"), reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_price") + "\n`25 ريال`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 else:
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
@@ -1081,10 +1117,27 @@ def handle_message(message):
             if step == "choose_room":
                 user_state[uid]["room"] = f"{state.get('building_label', '')}: {text}"
                 user_state[uid]["step"] = "enter_time"
-                bot.send_message(message.chat.id, t(uid, "enter_time"), reply_markup=back_only_with_no_exist_menu(uid))
+                bot.send_message(message.chat.id, "اختر وقت المحاضرة أو أدخل توقيتاً خاصاً:", reply_markup=lecture_time_menu(uid))
                 return
 
             if step == "enter_time":
+                time_options = {"🕐 8:00 - 10:00": "8:00 - 10:00", "🕐 10:00 - 12:00": "10:00 - 12:00", "🕐 12:00 - 14:00": "12:00 - 14:00"}
+                if text in time_options:
+                    user_state[uid]["time_val"] = time_options[text]
+                    user_state[uid]["step"] = "enter_date"
+                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
+                    send_today_date(message.chat.id, tomorrow=True)
+                elif text == "⏰ توقيت آخر":
+                    bot.send_message(message.chat.id, "أدخل الوقت:\n`8:00 - 9:30`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                    user_state[uid]["step"] = "enter_time_custom"
+                else:
+                    user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else text
+                    user_state[uid]["step"] = "enter_date"
+                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
+                    send_today_date(message.chat.id, tomorrow=True)
+                return
+
+            if step == "enter_time_custom":
                 user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else text
                 user_state[uid]["step"] = "enter_date"
                 bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
@@ -1097,13 +1150,13 @@ def handle_message(message):
                 dtype = state.get("data_type")
                 if dtype == "alert":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_alert"), reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_alert") + "\n`مثال: الاختبار يوم الخميس`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 elif dtype == "task":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_task"), reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_task") + "\n`مثال: حل تمارين الفصل 3`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 elif dtype == "summary":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, "أدخل نص الملخص:", reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, "أدخل نص الملخص:\n`مثال: ملخص الفصل الأول`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 elif dtype == "lecture":
                     subject = state.get("subject")
                     room = state.get("room", "")
