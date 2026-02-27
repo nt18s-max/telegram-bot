@@ -721,7 +721,25 @@ def handle_approval(call):
         parts = call.data.split("_", 2)
         requester_id = int(parts[1])
         requester_name = parts[2] if len(parts) > 2 else "مستخدم"
-        if add_user_to_sheet(requester_name, requester_id):
+        # ابحث عن السطر الموجود وحدّثه بدل إضافة سطر جديد
+        try:
+            rows = users_sheet.get_all_values()
+            uid_str = str(requester_id)
+            found = False
+            empty_streak = 0
+            for i, row in enumerate(rows[1:], start=2):
+                if not row or not any(c.strip() for c in row):
+                    empty_streak += 1
+                    if empty_streak >= 5: break
+                    continue
+                empty_streak = 0
+                cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
+                if cell_id == uid_str:
+                    users_sheet.update_cell(i, 4, True)  # مسموح = TRUE
+                    found = True
+                    break
+            if not found:
+                add_user_to_sheet(requester_name, requester_id)
             pending_requests.discard(requester_id)
             try:
                 bot.send_message(requester_id, LANG["ar"]["approved"])
@@ -729,7 +747,8 @@ def handle_approval(call):
                 pass
             bot.edit_message_text(f"✅ تمت الموافقة على {requester_name} ({requester_id})",
                                   call.message.chat.id, call.message.message_id)
-        else:
+        except Exception as e:
+            print(f"خطأ في الموافقة: {e}")
             bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
 
     elif call.data.startswith("reject_"):
