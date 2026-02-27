@@ -843,6 +843,7 @@ def handle_contact(message):
     try:
         rows = users_sheet.get_all_values()
         uid_str = str(uid)
+        found = False
         empty_streak = 0
         for i, row in enumerate(rows[1:], start=2):
             if not row or not any(c.strip() for c in row):
@@ -852,9 +853,13 @@ def handle_contact(message):
             empty_streak = 0
             if len(row) > 2 and row[2].strip() == uid_str:
                 users_sheet.update_cell(i, 2, phone)
+                found = True
                 break
-    except:
-        pass
+        if not found:
+            # المستخدم غير مسجل - أضفه بدون صلاحية
+            users_sheet.append_row([name, phone, uid_str, False, False, False, False])
+    except Exception as e:
+        print(f"خطأ في حفظ الهاتف: {e}")
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
 # ----- استقبال الملفات -----
