@@ -59,7 +59,7 @@ def is_pending(uid):
                 if empty_streak >= 5: break
                 continue
             empty_streak = 0
-            if len(row) > 1 and row[1].strip() == uid_str:
+            if len(row) > 2 and row[2].strip() == uid_str:
                 return True
     except:
         pass
@@ -253,10 +253,10 @@ def get_users():
                 continue
             empty_streak = 0
             name = row[0].strip()
-            uid_str = row[1].strip() if len(row) > 1 else ""
-            allowed_val = row[2].strip().upper() if len(row) > 2 else "FALSE"
-            admin_val = row[3].strip().upper() if len(row) > 3 else "FALSE"
-            owner_val = row[4].strip().upper() if len(row) > 4 else "FALSE"
+            uid_str = row[2].strip() if len(row) > 2 else ""
+            allowed_val = row[3].strip().upper() if len(row) > 3 else "FALSE"
+            admin_val = row[4].strip().upper() if len(row) > 4 else "FALSE"
+            owner_val = row[5].strip().upper() if len(row) > 5 else "FALSE"
             if name == "الكل":
                 if allowed_val == "TRUE": open_all = True
                 if admin_val == "TRUE": admin_all = True
@@ -277,9 +277,9 @@ def get_user_lang_from_sheet(uid):
     try:
         rows = users_sheet.get_all_values()
         for row in rows[1:]:
-            uid_str = row[1].strip() if len(row) > 1 else ""
+            uid_str = row[2].strip() if len(row) > 2 else ""
             if uid_str.isdigit() and int(uid_str) == uid:
-                lang_val = row[5].strip().upper() if len(row) > 5 else "FALSE"
+                lang_val = row[6].strip().upper() if len(row) > 6 else "FALSE"
                 return "en" if lang_val == "TRUE" else "ar"
         return "ar"
     except:
@@ -290,9 +290,9 @@ def save_user_lang_to_sheet(uid, lang):
     try:
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            uid_str = row[1].strip() if len(row) > 1 else ""
+            uid_str = row[2].strip() if len(row) > 2 else ""
             if uid_str.isdigit() and int(uid_str) == uid:
-                users_sheet.update_cell(i, 6, "TRUE" if lang == "en" else "FALSE")
+                users_sheet.update_cell(i, 7, lang == "en")
                 return True
         return False
     except:
@@ -314,7 +314,7 @@ def get_all_registered_uids():
                 if empty_streak >= 5: break
                 continue
             empty_streak = 0
-            uid_str = row[1].strip() if len(row) > 1 else ""
+            uid_str = row[2].strip() if len(row) > 2 else ""
             if uid_str.isdigit():
                 uids.append(int(uid_str))
         return uids
@@ -342,7 +342,7 @@ def is_owner(message):
 def add_user_to_sheet(name, uid, auto=False):
     try:
         display_name = f"🆕 {name}" if auto else name
-        users_sheet.append_row([display_name, str(uid), "TRUE", "FALSE", "FALSE", "FALSE"])
+        users_sheet.append_row([display_name, "", str(uid), True, False, False, False])
         return True
     except:
         return False
@@ -357,7 +357,7 @@ def auto_register_user(message, open_all=None):
         rows = users_sheet.get_all_values()
         uid_str = str(message.from_user.id)
         for row in rows[1:]:
-            if len(row) > 1 and row[1].strip() == uid_str:
+            if len(row) > 2 and row[2].strip() == uid_str:
                 return  # موجود مسبقاً
         name = message.from_user.full_name or "مجهول"
         add_user_to_sheet(name, message.from_user.id, auto=True)
@@ -368,9 +368,9 @@ def update_user_role(uid, make_admin):
     try:
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            uid_str = row[1].strip() if len(row) > 1 else ""
+            uid_str = row[2].strip() if len(row) > 2 else ""
             if uid_str.isdigit() and int(uid_str) == uid:
-                users_sheet.update_cell(i, 4, "TRUE" if make_admin else "FALSE")
+                users_sheet.update_cell(i, 5, make_admin)
                 return True
         return False
     except:
@@ -839,6 +839,22 @@ def handle_contact(message):
             bot.send_message(owner_id, msg)
         except:
             pass
+    # حفظ الرقم في الشيت عمود B
+    try:
+        rows = users_sheet.get_all_values()
+        uid_str = str(uid)
+        empty_streak = 0
+        for i, row in enumerate(rows[1:], start=2):
+            if not row or not any(c.strip() for c in row):
+                empty_streak += 1
+                if empty_streak >= 5: break
+                continue
+            empty_streak = 0
+            if len(row) > 2 and row[2].strip() == uid_str:
+                users_sheet.update_cell(i, 2, phone)
+                break
+    except:
+        pass
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
 # ----- استقبال الملفات -----
@@ -983,10 +999,10 @@ def handle_message(message):
                 response = "👥 *قائمة المستخدمين:*\n" + "─" * 25 + "\n"
                 for row in rows[1:]:
                     name = row[0].strip() if row else ""
-                    uid_str = row[1].strip() if len(row) > 1 else ""
-                    allowed = row[2].strip().upper() if len(row) > 2 else "FALSE"
-                    adm = row[3].strip().upper() if len(row) > 3 else "FALSE"
-                    own = row[4].strip().upper() if len(row) > 4 else "FALSE"
+                    uid_str = row[2].strip() if len(row) > 2 else ""
+                    allowed = row[3].strip().upper() if len(row) > 3 else "FALSE"
+                    adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
+                    own = row[5].strip().upper() if len(row) > 5 else "FALSE"
                     if not name or name == "الكل": continue
                     role = "👸 مالك" if own == "TRUE" else ("👑 أدمن" if adm == "TRUE" else "👤 مستخدم")
                     status = "✅" if allowed == "TRUE" else "❌"
