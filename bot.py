@@ -59,7 +59,7 @@ def is_pending(uid):
                 if empty_streak >= 5: break
                 continue
             empty_streak = 0
-            if len(row) > 2 and row[2].strip() == uid_str:
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 return True
     except:
         pass
@@ -357,7 +357,7 @@ def auto_register_user(message, open_all=None):
         rows = users_sheet.get_all_values()
         uid_str = str(message.from_user.id)
         for row in rows[1:]:
-            if len(row) > 2 and row[2].strip() == uid_str:
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 return  # موجود مسبقاً
         name = message.from_user.full_name or "مجهول"
         add_user_to_sheet(name, message.from_user.id, auto=True)
@@ -851,13 +851,12 @@ def handle_contact(message):
                 if empty_streak >= 5: break
                 continue
             empty_streak = 0
-            if len(row) > 2 and row[2].strip() == uid_str:
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 users_sheet.update_cell(i, 2, phone)
                 found = True
                 break
         if not found:
-            # المستخدم غير مسجل - أضفه بدون صلاحية
-            users_sheet.append_row([name, phone, uid_str, False, False, False, False])
+            print(f"لم يُعثر على المستخدم {uid_str} في الشيت لحفظ الهاتف")
     except Exception as e:
         print(f"خطأ في حفظ الهاتف: {e}")
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
