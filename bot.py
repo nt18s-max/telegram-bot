@@ -16,7 +16,7 @@ import requests as _requests
 
 # ===== نظام Logging =====
 LOG_BOT_TOKEN = os.environ.get("LOG_BOT_TOKEN", "")
-LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID", "7727079820")
+LOG_CHAT_ID = ""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -277,14 +277,14 @@ def get_rooms(building):
 def get_users():
     try:
         rows = users_sheet.get_all_values()
-        allowed, admins, owners = [], [], []
+        allowed, admins, owners, log_ids = [], [], [], []
         open_all = admin_all = False
         empty_streak = 0
         for row in rows[1:]:
             if not row or not any(c.strip() for c in row):
                 empty_streak += 1
                 if empty_streak >= 5:
-                    break  # توقف عند 5 صفوف فارغة متتالية
+                    break
                 continue
             empty_streak = 0
             name = row[0].strip()
@@ -292,6 +292,7 @@ def get_users():
             allowed_val = row[3].strip().upper() if len(row) > 3 else "FALSE"
             admin_val = row[4].strip().upper() if len(row) > 4 else "FALSE"
             owner_val = row[5].strip().upper() if len(row) > 5 else "FALSE"
+            log_val = row[7].strip().upper() if len(row) > 7 else "FALSE"
             if name == "الكل":
                 if allowed_val == "TRUE": open_all = True
                 if admin_val == "TRUE": admin_all = True
@@ -302,10 +303,11 @@ def get_users():
             if allowed_val == "TRUE": allowed.append(uid)
             if admin_val == "TRUE": admins.append(uid)
             if owner_val == "TRUE": owners.append(uid)
-        return allowed, admins, owners, open_all, admin_all
+            if log_val == "TRUE": log_ids.append(uid)
+        return allowed, admins, owners, open_all, admin_all, log_ids
     except Exception as e:
         log_error(f"خطأ في جلب المستخدمين: {e}")
-        return [], [], [], False, False
+        return [], [], [], False, False, []
 
 def get_user_lang_from_sheet(uid):
     """يقرأ اللغة من عمود F في الشيت"""
@@ -357,7 +359,7 @@ def get_all_registered_uids():
         return []
 
 def get_owner_ids():
-    _, _, owners, _, _ = get_users()
+    _, _, owners, _, _, _ = get_users()
     return owners
 
 def check_user(message):
@@ -377,7 +379,7 @@ def is_owner(message):
 def add_user_to_sheet(name, uid, auto=False):
     try:
         display_name = f"🆕 {name}" if auto else name
-        users_sheet.append_row([display_name, "", uid, True, False, False, False], value_input_option="USER_ENTERED")
+        users_sheet.append_row([display_name, "", uid, True, False, False, False, False], value_input_option="USER_ENTERED")
         return True
     except:
         return False
@@ -776,7 +778,6 @@ def handle_approval(call):
             if not found:
                 add_user_to_sheet(requester_name, requester_id)
             pending_requests.discard(requester_id)
-            log_info(f"USER_APPROVED | requester_id={requester_id} | name={requester_name} | by={call.from_user.id}")
             try:
                 bot.send_message(requester_id, LANG["ar"]["approved"])
             except:
@@ -790,7 +791,6 @@ def handle_approval(call):
     elif call.data.startswith("reject_"):
         requester_id = int(call.data.split("_")[1])
         pending_requests.discard(requester_id)
-        log_info(f"USER_REJECTED | requester_id={requester_id} | by={call.from_user.id}")
         try:
             bot.send_message(requester_id, LANG["ar"]["rejected"])
         except:
@@ -833,7 +833,7 @@ def start_message(message):
     _, rejection, _ = get_settings()
     uid = message.from_user.id
     load_user_lang(uid)
-    allowed_ids, admin_ids, owner_ids, open_all, admin_all = get_users()
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
     is_allowed = open_all or uid in allowed_ids
     if not is_allowed:
         owners = owner_ids
@@ -927,7 +927,6 @@ def handle_contact(message):
     except Exception as e:
         log_error(f"خطأ في حفظ جهة الاتصال: {e}")
 
-    log_info(f"CONTACT_SHARED | uid={uid} | name={name} | phone={phone}")
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
 # ----- استقبال الملفات -----
@@ -936,7 +935,7 @@ def handle_file(message):
     uid = message.from_user.id
     load_user_lang(uid)
     _, rejection, _ = get_settings()
-    allowed_ids, admin_ids, owner_ids, open_all, admin_all = get_users()
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
     is_allowed = open_all or uid in allowed_ids
     if not is_allowed:
         bot.send_message(message.chat.id, rejection)
@@ -993,7 +992,7 @@ def handle_message(message):
     load_user_lang(uid)
     # جلب كل شيء مرة واحدة
     welcome_msg, rejection, materials = get_settings()
-    allowed_ids, admin_ids, owner_ids, open_all, admin_all = get_users()
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
     is_allowed = open_all or uid in allowed_ids
     admin = admin_all or uid in admin_ids
     owner = uid in owner_ids
@@ -1243,6 +1242,7 @@ def handle_message(message):
                     return
                 date = parse_date(text)
                 if save_file_to_cell(date, state.get("subject"), state.get("col"), state.get("file_id")):
+                    log_info(f"FILE_SAVED | uid={uid} | subject={state.get('subject')} | type={state.get('file_type')} | date={date}")
                     bot.send_message(message.chat.id,
                                      f"{t(uid, 'file_saved')}\n\n📌 *{state.get('subject')}*\n{state.get('file_type')}\n📅 {date}",
                                      parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
@@ -1376,17 +1376,21 @@ def handle_message(message):
                             break
                     if not updated:
                         sheet.append_row(["", subject, "", "", "", val, "", ""], value_input_option="USER_ENTERED")
+                    log_info(f"PRICE_SAVED | uid={uid} | subject={subject} | val={val}")
                     bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "task":
                     ok = save_text_to_cell(date, subject, 4, val)
+                    if ok: log_info(f"TASK_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
                     bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
                                      reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "summary":
                     ok = save_text_to_cell(date, subject, 6, val)
+                    if ok: log_info(f"SUMMARY_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
                     bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
                                      reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "alert":
                     ok = save_text_to_cell(date, subject, 7, val)
+                    if ok: log_info(f"ALERT_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
                     bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
                                      reply_markup=main_menu(uid, admin=admin, owner=owner))
                 user_state.pop(uid, None)
