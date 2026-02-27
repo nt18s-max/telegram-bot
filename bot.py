@@ -783,8 +783,6 @@ def start_message(message):
         owners = owner_ids
         if owners:
             if not is_pending(uid):
-                name = message.from_user.full_name or "مجهول"
-                notify_owners_new_request(uid, name)
                 pending_requests.add(uid)
             bot.send_message(message.chat.id, rejection)
             contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
@@ -830,16 +828,25 @@ def help_message(message):
 def handle_contact(message):
     uid = message.from_user.id
     contact = message.contact
-    phone = contact.phone_number if contact else "غير معروف"
+    phone = contact.phone_number if contact else ""
     name = message.from_user.full_name or "مجهول"
+
+    # إشعار المالك برسالة موحدة مع أزرار القبول/الرفض
     owners = get_owner_ids()
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.row(
+        telebot.types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}_{name}"),
+        telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
+    )
+    phone_line = f"📞 الرقم: {phone}\n" if phone else ""
+    msg = f"📩 طلب انضمام جديد!\n\n👤 الاسم: {name}\n🆔 المعرف: {uid}\n{phone_line}"
     for owner_id in owners:
         try:
-            msg = f"📱 جهة اتصال جديدة:\n👤 الاسم: {name}\n🆔 المعرف: {uid}\n📞 الرقم: {phone}"
-            bot.send_message(owner_id, msg)
+            bot.send_message(owner_id, msg, reply_markup=markup)
         except:
             pass
-    # حفظ الرقم في الشيت عمود B
+
+    # حفظ الاسم + الرقم + الهاتف معاً — تحديث إذا موجود أو إضافة إذا جديد
     try:
         rows = users_sheet.get_all_values()
         uid_str = str(uid)
@@ -851,14 +858,18 @@ def handle_contact(message):
                 if empty_streak >= 5: break
                 continue
             empty_streak = 0
-            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                users_sheet.update_cell(i, 2, phone)
+            cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
+            if cell_id == uid_str:
+                # تحديث الاسم والهاتف في نفس الوقت
+                users_sheet.update(f"A{i}:B{i}", [[name, phone]])
                 found = True
                 break
         if not found:
-            print(f"لم يُعثر على المستخدم {uid_str} في الشيت لحفظ الهاتف")
+            # إضافة سطر جديد بالاسم والهاتف والـ ID بدون صلاحية
+            users_sheet.append_row([name, phone, uid, False, False, False, False], value_input_option="USER_ENTERED")
     except Exception as e:
-        print(f"خطأ في حفظ الهاتف: {e}")
+        print(f"خطأ في حفظ جهة الاتصال: {e}")
+
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
 # ----- استقبال الملفات -----
@@ -934,8 +945,6 @@ def handle_message(message):
         contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
         if owner_ids:
             if not is_pending(uid):
-                name = message.from_user.full_name or "مجهول"
-                notify_owners_new_request(uid, name)
                 pending_requests.add(uid)
             bot.send_message(message.chat.id, rejection)
             bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
