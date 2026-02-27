@@ -342,7 +342,7 @@ def is_owner(message):
 def add_user_to_sheet(name, uid, auto=False):
     try:
         display_name = f"🆕 {name}" if auto else name
-        users_sheet.append_row([display_name, "", str(uid), True, False, False, False])
+        users_sheet.append_row([display_name, "", uid, True, False, False, False], value_input_option="USER_ENTERED")
         return True
     except:
         return False
