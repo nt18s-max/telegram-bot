@@ -11,6 +11,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import logging
+import requests as _requests
+
+# ===== نظام Logging =====
+LOG_BOT_TOKEN = os.environ.get("LOG_BOT_TOKEN", "")
+LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID", "7727079820")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("BotLogger")
+
+def tg_log(level, msg):
+    """يرسل اللوج لبوت التيليغرام"""
+    icons = {"INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
+    icon = icons.get(level, "📋")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = f"{icon} *{level}*\n`{now}`\n\n{msg}"
+    try:
+        _requests.post(
+            f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
+            json={"chat_id": LOG_CHAT_ID, "text": text, "parse_mode": "Markdown"},
+            timeout=5
+        )
+    except:
+        pass
+    getattr(logger, level.lower(), logger.info)(msg)
+
+def log_info(msg):     tg_log("INFO", msg)
+def log_warning(msg):  tg_log("WARNING", msg)
+def log_error(msg):    tg_log("ERROR", msg)
+def log_critical(msg): tg_log("CRITICAL", msg)
+
 TOKEN = os.environ.get("BOT_TOKEN", "")
 SHEET_KEY = os.environ.get("SHEET_KEY", "")
 
@@ -35,7 +70,7 @@ try:
     except:
         rooms_sheet = None
 except Exception as e:
-    print(f"خطأ في الاتصال بـ Google Sheets: {e}")
+    log_critical(f"خطأ في الاتصال بـ Google Sheets: {e}")
     sheet = None
     users_sheet = None
     help_sheet = None
@@ -213,7 +248,7 @@ def get_settings():
                 materials.append({"file_id": file_id, "file_type": file_type, "audience": audience, "note": note})
         return welcome, rejection, materials
     except Exception as e:
-        print(f"خطأ في جلب الإعدادات: {e}")
+        log_error(f"خطأ في جلب الإعدادات: {e}")
         return "مرحبًا! اختر أحد الخيارات:", "⛔ غير مسموح", []
 
 def get_subjects():
@@ -226,7 +261,7 @@ def get_subjects():
                 subjects.append(subj)
         return subjects
     except Exception as e:
-        print(f"خطأ في جلب المواد: {e}")
+        log_error(f"خطأ في جلب المواد: {e}")
         return []
 
 def get_rooms(building):
@@ -269,7 +304,7 @@ def get_users():
             if owner_val == "TRUE": owners.append(uid)
         return allowed, admins, owners, open_all, admin_all
     except Exception as e:
-        print(f"خطأ في جلب المستخدمين: {e}")
+        log_error(f"خطأ في جلب المستخدمين: {e}")
         return [], [], [], False, False
 
 def get_user_lang_from_sheet(uid):
@@ -482,7 +517,7 @@ def save_file_to_cell(date, subject, col, file_id):
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
         return True
     except Exception as e:
-        print(f"خطأ في حفظ الملف: {e}")
+        log_error(f"خطأ في حفظ الملف: {e}")
         return False
 
 def save_text_to_cell(date, subject, col, text_val):
@@ -499,7 +534,7 @@ def save_text_to_cell(date, subject, col, text_val):
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
         return True
     except Exception as e:
-        print(f"خطأ في حفظ البيانات: {e}")
+        log_error(f"خطأ في حفظ البيانات: {e}")
         return False
 
 def save_lecture(date, subject, time_val, room):
@@ -519,7 +554,7 @@ def save_lecture(date, subject, time_val, room):
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
         return True
     except Exception as e:
-        print(f"خطأ في حفظ المحاضرة: {e}")
+        log_error(f"خطأ في حفظ المحاضرة: {e}")
         return False
 
 def delete_cell(date, subject, col):
@@ -542,7 +577,7 @@ def save_help_material(file_id, file_type, audience, note=""):
         help_sheet.update([["مادة مساعدة"]], f"A{next_row}")
         return True
     except Exception as e:
-        print(f"خطأ في حفظ مادة المساعدة: {e}")
+        log_error(f"خطأ في حفظ مادة المساعدة: {e}")
         return False
 
 def send_help_materials(chat_id, uid, audience_filter):
@@ -741,6 +776,7 @@ def handle_approval(call):
             if not found:
                 add_user_to_sheet(requester_name, requester_id)
             pending_requests.discard(requester_id)
+            log_info(f"USER_APPROVED | requester_id={requester_id} | name={requester_name} | by={call.from_user.id}")
             try:
                 bot.send_message(requester_id, LANG["ar"]["approved"])
             except:
@@ -748,12 +784,13 @@ def handle_approval(call):
             bot.edit_message_text(f"✅ تمت الموافقة على {requester_name} ({requester_id})",
                                   call.message.chat.id, call.message.message_id)
         except Exception as e:
-            print(f"خطأ في الموافقة: {e}")
+            log_error(f"خطأ في الموافقة: {e}")
             bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
 
     elif call.data.startswith("reject_"):
         requester_id = int(call.data.split("_")[1])
         pending_requests.discard(requester_id)
+        log_info(f"USER_REJECTED | requester_id={requester_id} | by={call.from_user.id}")
         try:
             bot.send_message(requester_id, LANG["ar"]["rejected"])
         except:
@@ -817,6 +854,7 @@ def start_message(message):
     welcome, _, _ = get_settings()
     admin = admin_all or uid in admin_ids
     owner = uid in owner_ids
+    log_info(f"START | uid={uid} | name={message.from_user.full_name} | admin={admin} | owner={owner}")
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
 
 # ----- /lang -----
@@ -857,11 +895,11 @@ def handle_contact(message):
         telebot.types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{uid}_{name}"),
         telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{uid}")
     )
-    phone_line = f"📞 الرقم: {phone}\n" if phone else ""
-    msg = f"📩 طلب انضمام جديد!\n\n👤 الاسم: {name}\n🆔 المعرف: {uid}\n{phone_line}"
+    phone_line = f"📞 الرقم: `{phone}`\n" if phone else ""
+    msg = f"📩 طلب انضمام جديد!\n\n👤 الاسم: `{name}`\n🆔 المعرف: `{uid}`\n{phone_line}"
     for owner_id in owners:
         try:
-            bot.send_message(owner_id, msg, reply_markup=markup)
+            bot.send_message(owner_id, msg, parse_mode="Markdown", reply_markup=markup)
         except:
             pass
 
@@ -887,8 +925,9 @@ def handle_contact(message):
             # إضافة سطر جديد بالاسم والهاتف والـ ID بدون صلاحية
             users_sheet.append_row([name, phone, uid, False, False, False, False], value_input_option="USER_ENTERED")
     except Exception as e:
-        print(f"خطأ في حفظ جهة الاتصال: {e}")
+        log_error(f"خطأ في حفظ جهة الاتصال: {e}")
 
+    log_info(f"CONTACT_SHARED | uid={uid} | name={name} | phone={phone}")
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
 # ----- استقبال الملفات -----
@@ -1314,8 +1353,10 @@ def handle_message(message):
                     room = state.get("room", "")
                     time_val = normalize_time(state.get("time_val", ""))
                     if save_lecture(date, subject, time_val, room):
+                        log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
                         bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
+                        log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
                         bot.send_message(message.chat.id, t(uid, "data_error"))
                     user_state.pop(uid, None)
                 return
@@ -1645,7 +1686,7 @@ def handle_message(message):
 
     except Exception as e:
         bot.send_message(message.chat.id, t(uid, "error"))
-        print(f"Error: {e}")
+        log_error(f"خطأ في handle_message: {e}")
 
 class KeepAlive(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1662,5 +1703,5 @@ def run_server():
 
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
-    print("البوت يعمل...")
+    log_info("البوت يعمل...")
     bot.infinity_polling()
