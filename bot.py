@@ -31,14 +31,17 @@ def tg_log(level, msg):
     icon = icons.get(level, "📋")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text = f"{icon} *{level}*\n`{now}`\n\n{msg}"
-    try:
-        _requests.post(
-            f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
-            json={"chat_id": LOG_CHAT_ID, "text": text, "parse_mode": "Markdown"},
-            timeout=5
-        )
-    except:
-        pass
+    if LOG_BOT_TOKEN:
+        recipients = get_log_recipients()
+        for chat_id in recipients:
+            try:
+                _requests.post(
+                    f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                    timeout=5
+                )
+            except:
+                pass
     getattr(logger, level.lower(), logger.info)(msg)
 
 def log_info(msg):     tg_log("INFO", msg)
@@ -1395,11 +1398,53 @@ def handle_message(message):
                     bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
                     return
 
+            if step == "confirm_overwrite":
+                subject = state.get("subject")
+                date = state.get("date", "")
+                dtype = state.get("data_type")
+                existing = state.get("existing_val", "")
+                new_val = state.get("pending_val", "")
+                col = {"task": 4, "summary": 6, "alert": 7}.get(dtype, 4)
+                if text == "✏️ بجانبه":
+                    combined = existing + " | " + new_val
+                    ok = save_text_to_cell(date, subject, col, combined)
+                    if ok: log_info(f"{dtype.upper()}_APPENDED | uid={uid} | subject={subject} | date={date}")
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
+                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                elif text == "🔄 بدله":
+                    ok = save_text_to_cell(date, subject, col, new_val)
+                    if ok: log_info(f"{dtype.upper()}_REPLACED | uid={uid} | subject={subject} | date={date}")
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
+                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                else:
+                    bot.send_message(message.chat.id, t(uid, "choose_menu"), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                user_state.pop(uid, None)
+                return
+
             if step == "enter_value":
                 subject = state.get("subject")
                 date = state.get("date", "")
                 dtype = state.get("data_type")
                 val = text
+
+                # تحقق من وجود قيمة سابقة لـ task/summary/alert
+                if dtype in ("task", "summary", "alert"):
+                    col = {"task": 4, "summary": 6, "alert": 7}[dtype]
+                    existing_rows = get_data()
+                    matched = [r for r in existing_rows if safe_get(r, 1) == subject and parse_date(safe_get(r, 0)) == date]
+                    existing_val = get_text(safe_get(matched[0], col)) if matched else ""
+                    if existing_val and existing_val.strip():
+                        user_state[uid]["step"] = "confirm_overwrite"
+                        user_state[uid]["existing_val"] = existing_val
+                        user_state[uid]["pending_val"] = val
+                        overwrite_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                        overwrite_markup.add("✏️ بجانبه", "🔄 بدله")
+                        overwrite_markup.add(t(uid, "back"))
+                        bot.send_message(message.chat.id,
+                                         f"⚠️ يوجد مدخل سابق:\n`{existing_val}`\n\nماذا تريد؟",
+                                         parse_mode="Markdown", reply_markup=overwrite_markup)
+                        return
+
                 if dtype == "price":
                     rows = sheet.get_all_values()
                     updated = False
