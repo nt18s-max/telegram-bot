@@ -1267,24 +1267,40 @@ def handle_message(message):
 
             if step == "choose_type" and text in data_types:
                 user_state[uid]["data_type"] = data_types[text]
-                user_state[uid]["step"] = "choose_subject"
-                markup = subjects_markup
-                bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=markup)
+                dtype = data_types[text]
+                if dtype == "lecture":
+                    # ترتيب جديد للمحاضرة: تاريخ ← مبنى ← قاعة ← مادة ← وقت
+                    user_state[uid]["step"] = "enter_date"
+                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
+                    send_today_date(message.chat.id, tomorrow=True)
+                elif dtype == "price":
+                    user_state[uid]["step"] = "choose_subject"
+                    bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
+                else:
+                    user_state[uid]["step"] = "choose_subject"
+                    bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
                 return
 
-            if step == "choose_subject" and text in subjects_list:
-                user_state[uid]["subject"] = text
+            if step == "enter_date":
                 dtype = state.get("data_type")
+                if not is_valid_date(text):
+                    bot.send_message(message.chat.id, "❌ صيغة التاريخ غير صحيحة.\n`مثال: 27/02/2026`", parse_mode="Markdown")
+                    send_today_date(message.chat.id, tomorrow=(dtype == "lecture"))
+                    return
+                date = parse_date(text)
+                user_state[uid]["date"] = date
                 if dtype == "lecture":
                     user_state[uid]["step"] = "choose_building"
                     bot.send_message(message.chat.id, t(uid, "choose_building"), reply_markup=buildings_menu(uid))
-                elif dtype == "price":
+                elif dtype == "alert":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_price") + "\n`25 ريال`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
-                else:
-                    user_state[uid]["step"] = "enter_date"
-                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
-                    send_today_date(message.chat.id, tomorrow=(state.get("data_type") == "lecture"))
+                    bot.send_message(message.chat.id, t(uid, "enter_alert") + "\n`مثال: الاختبار يوم الخميس`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                elif dtype == "task":
+                    user_state[uid]["step"] = "enter_value"
+                    bot.send_message(message.chat.id, t(uid, "enter_task") + "\n`مثال: حل تمارين الفصل 3`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                elif dtype == "summary":
+                    user_state[uid]["step"] = "enter_value"
+                    bot.send_message(message.chat.id, "أدخل نص الملخص:\n`مثال: ملخص الفصل الأول`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 return
 
             if step == "choose_building":
@@ -1303,63 +1319,81 @@ def handle_message(message):
 
             if step == "choose_room":
                 user_state[uid]["room"] = f"{state.get('building_label', '')}: {text}"
-                user_state[uid]["step"] = "enter_time"
-                bot.send_message(message.chat.id, "اختر وقت المحاضرة أو أدخل توقيتاً خاصاً:", reply_markup=lecture_time_menu(uid))
+                user_state[uid]["step"] = "choose_subject"
+                bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
+                return
+
+            if step == "choose_subject" and text in subjects_list:
+                user_state[uid]["subject"] = text
+                dtype = state.get("data_type")
+                if dtype == "lecture":
+                    user_state[uid]["step"] = "enter_time"
+                    bot.send_message(message.chat.id, "اختر وقت المحاضرة أو أدخل توقيتاً خاصاً:", reply_markup=lecture_time_menu(uid))
+                elif dtype == "price":
+                    user_state[uid]["step"] = "enter_value"
+                    bot.send_message(message.chat.id, t(uid, "enter_price") + "\n`25 ريال`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                 return
 
             if step == "enter_time":
-                time_options = {"🕐 08:00 - 10:00": "8:00 - 10:00", "🕐 10:00 - 12:00": "10:00 - 12:00", "🕐 12:00 - 14:00": "12:00 - 14:00"}
+                time_options = {"🕐 08:00 - 10:00": "08:00 - 10:00", "🕐 10:00 - 12:00": "10:00 - 12:00", "🕐 12:00 - 14:00": "12:00 - 14:00"}
                 if text in time_options:
                     user_state[uid]["time_val"] = time_options[text]
-                    user_state[uid]["step"] = "enter_date"
-                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
-                    send_today_date(message.chat.id, tomorrow=True)
                 elif text == "⏰ توقيت آخر":
                     bot.send_message(message.chat.id, "أدخل الوقت:\n`08:00 - 09:30`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
                     user_state[uid]["step"] = "enter_time_custom"
+                    return
                 else:
-                    user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else text
-                    user_state[uid]["step"] = "enter_date"
-                    bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
-                    send_today_date(message.chat.id, tomorrow=True)
+                    user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else normalize_time(text)
+                # حفظ المحاضرة
+                subject = state.get("subject")
+                date = state.get("date", "")
+                room = state.get("room", "")
+                time_val = normalize_time(user_state[uid].get("time_val", ""))
+                if save_lecture(date, subject, time_val, room):
+                    log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
+                    add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
+                    user_state[uid]["step"] = "lecture_done"
+                    bot.send_message(message.chat.id, f"✅ تم حفظ المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
+                else:
+                    log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
+                    bot.send_message(message.chat.id, t(uid, "data_error"))
+                    user_state.pop(uid, None)
                 return
 
             if step == "enter_time_custom":
                 user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else normalize_time(text)
-                user_state[uid]["step"] = "enter_date"
-                bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
-                send_today_date(message.chat.id, tomorrow=True)
-                return
-
-            if step == "enter_date":
-                if not is_valid_date(text):
-                    bot.send_message(message.chat.id, "❌ صيغة التاريخ غير صحيحة.\n`مثال: 27/02/2026`", parse_mode="Markdown")
-                    send_today_date(message.chat.id, tomorrow=(state.get("data_type") == "lecture"))
-                    return
-                date = parse_date(text)
-                user_state[uid]["date"] = date
-                dtype = state.get("data_type")
-                if dtype == "alert":
-                    user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_alert") + "\n`مثال: الاختبار يوم الخميس`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
-                elif dtype == "task":
-                    user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_task") + "\n`مثال: حل تمارين الفصل 3`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
-                elif dtype == "summary":
-                    user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, "أدخل نص الملخص:\n`مثال: ملخص الفصل الأول`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
-                elif dtype == "lecture":
-                    subject = state.get("subject")
-                    room = state.get("room", "")
-                    time_val = normalize_time(state.get("time_val", ""))
-                    if save_lecture(date, subject, time_val, room):
-                        log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
-                        bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
-                    else:
-                        log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
-                        bot.send_message(message.chat.id, t(uid, "data_error"))
+                subject = state.get("subject")
+                date = state.get("date", "")
+                room = state.get("room", "")
+                time_val = normalize_time(user_state[uid]["time_val"])
+                if save_lecture(date, subject, time_val, room):
+                    log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
+                    add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
+                    user_state[uid]["step"] = "lecture_done"
+                    bot.send_message(message.chat.id, f"✅ تم حفظ المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
+                else:
+                    log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
+                    bot.send_message(message.chat.id, t(uid, "data_error"))
                     user_state.pop(uid, None)
                 return
+
+            if step == "lecture_done":
+                if text == "➕ إضافة محاضرة أخرى":
+                    saved_date = state.get("date", "")
+                    saved_room = state.get("room", "")
+                    saved_building = state.get("building", "")
+                    saved_building_label = state.get("building_label", "")
+                    user_state[uid] = {
+                        "adding_data": True, "step": "choose_subject",
+                        "data_type": "lecture",
+                        "date": saved_date, "room": saved_room,
+                        "building": saved_building, "building_label": saved_building_label,
+                        "from_add_another": True  # رجوع من المادة يروح للمبنى
+                    }
+                    bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
+                    return
 
             if step == "enter_value":
                 subject = state.get("subject")
