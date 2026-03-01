@@ -542,6 +542,49 @@ def save_text_to_cell(date, subject, col, text_val):
         log_error(f"خطأ في حفظ البيانات: {e}")
         return False
 
+def parse_time_range(time_str):
+    """يحول '08:00 - 10:00' إلى (480, 600) دقائق"""
+    import re
+    t = normalize_time(time_str)
+    sep = r'\s*-\s*'
+    parts = re.split(sep, t)
+    if len(parts) != 2:
+        return None, None
+    def to_minutes(s):
+        s = s.strip()
+        h, m = s.split(":") if ":" in s else (s, "0")
+        return int(h) * 60 + int(m)
+    try:
+        return to_minutes(parts[0]), to_minutes(parts[1])
+    except:
+        return None, None
+
+def check_lecture_conflict(date, time_val):
+    """يتحقق من التداخل الزمني مع أي محاضرة في نفس اليوم"""
+    try:
+        new_start, new_end = parse_time_range(time_val)
+        if new_start is None:
+            return None
+        rows = get_data()
+        for row in rows:
+            r_date = parse_date(safe_get(row, 0))
+            r_time = safe_get(row, 2)
+            if r_date != date or not r_time.strip():
+                continue
+            ex_start, ex_end = parse_time_range(r_time)
+            if ex_start is None:
+                continue
+            # تحقق من التداخل: الجديد يبدأ قبل نهاية القديم والقديم يبدأ قبل نهاية الجديد
+            if new_start < ex_end and ex_start < new_end:
+                return {
+                    "subject": safe_get(row, 1),
+                    "room": safe_get(row, 3),
+                    "time": normalize_time(r_time)
+                }
+    except:
+        pass
+    return None
+
 def save_lecture(date, subject, time_val, room):
     """يحفظ وقت ومكان المحاضرة في نفس السطر دفعة واحدة"""
     try:
@@ -1347,12 +1390,21 @@ def handle_message(message):
                     return
                 else:
                     user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else normalize_time(text)
-                # حفظ المحاضرة
+                # تحقق من التعارض ثم حفظ
                 subject = state.get("subject")
                 date = state.get("date", "")
                 room = state.get("room", "")
                 time_val = normalize_time(user_state[uid].get("time_val", ""))
-                if save_lecture(date, subject, time_val, room):
+                conflict = check_lecture_conflict(date, time_val)
+                if conflict:
+                    user_state[uid]["step"] = "confirm_lecture_overwrite"
+                    user_state[uid]["time_val"] = time_val
+                    conflict_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    conflict_markup.add("🔄 استبدال", t(uid, "back"))
+                    bot.send_message(message.chat.id,
+                        f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n🕐 {conflict['time']}\n📍 {conflict['room']}\n\nالوقت الجديد `{time_val}` يتداخل معها.\n\nماذا تريد؟",
+                        parse_mode="Markdown", reply_markup=conflict_markup)
+                elif save_lecture(date, subject, time_val, room):
                     log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
                     add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
@@ -1370,7 +1422,16 @@ def handle_message(message):
                 date = state.get("date", "")
                 room = state.get("room", "")
                 time_val = normalize_time(user_state[uid]["time_val"])
-                if save_lecture(date, subject, time_val, room):
+                conflict = check_lecture_conflict(date, time_val)
+                if conflict:
+                    user_state[uid]["step"] = "confirm_lecture_overwrite"
+                    user_state[uid]["time_val"] = time_val
+                    conflict_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                    conflict_markup.add("🔄 استبدال", t(uid, "back"))
+                    bot.send_message(message.chat.id,
+                        f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n🕐 {conflict['time']}\n📍 {conflict['room']}\n\nالوقت الجديد `{time_val}` يتداخل معها.\n\nماذا تريد؟",
+                        parse_mode="Markdown", reply_markup=conflict_markup)
+                elif save_lecture(date, subject, time_val, room):
                     log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
                     add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
@@ -1380,6 +1441,23 @@ def handle_message(message):
                     log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
                     bot.send_message(message.chat.id, t(uid, "data_error"))
                     user_state.pop(uid, None)
+                return
+
+            if step == "confirm_lecture_overwrite":
+                subject = state.get("subject")
+                date = state.get("date", "")
+                room = state.get("room", "")
+                time_val = state.get("time_val", "")
+                if text == "🔄 استبدال":
+                    if save_lecture(date, subject, time_val, room):
+                        log_info(f"LECTURE_REPLACED | uid={uid} | subject={subject} | date={date} | time={time_val}")
+                        add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+                        add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
+                        user_state[uid]["step"] = "lecture_done"
+                        bot.send_message(message.chat.id, f"✅ تم استبدال المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
+                    else:
+                        bot.send_message(message.chat.id, t(uid, "data_error"))
+                        user_state.pop(uid, None)
                 return
 
             if step == "lecture_done":
