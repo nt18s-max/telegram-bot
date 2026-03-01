@@ -32,7 +32,24 @@ def tg_log(level, msg):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     text = f"{icon} *{level}*\n`{now}`\n\n{msg}"
     if LOG_BOT_TOKEN:
-        recipients = get_log_recipients()
+        # قراءة مباشرة من الشيت بدون دالة منفصلة
+        recipients = []
+        try:
+            if users_sheet:
+                rows = users_sheet.get_all_values()
+                empty_streak = 0
+                for row in rows[1:]:
+                    if not row or not any(c.strip() for c in row):
+                        empty_streak += 1
+                        if empty_streak >= 5: break
+                        continue
+                    empty_streak = 0
+                    uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
+                    log_val = row[7].strip().upper() if len(row) > 7 else "FALSE"
+                    if uid_str.isdigit() and log_val == "TRUE":
+                        recipients.append(int(uid_str))
+        except:
+            pass
         for chat_id in recipients:
             try:
                 _requests.post(
