@@ -810,6 +810,51 @@ def manage_users_menu(uid):
     return markup
 
 # ----- Callback handler للموافقة/الرفض -----
+@bot.callback_query_handler(func=lambda call: call.data.startswith("revoke_") or call.data.startswith("grant_"))
+def handle_permission(call):
+    caller_id = call.from_user.id
+    if not is_owner_id(caller_id):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    parts = call.data.split("_", 1)
+    action = parts[0]
+    target_uid = parts[1]
+    try:
+        rows = users_sheet.get_all_values()
+        empty_streak = 0
+        for i, row in enumerate(rows[1:], start=2):
+            if not row or not any(c.strip() for c in row):
+                empty_streak += 1
+                if empty_streak >= 5: break
+                continue
+            empty_streak = 0
+            cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
+            if cell_id == target_uid:
+                new_val = False if action == "revoke" else True
+                users_sheet.update_cell(i, 4, new_val)
+                label = "🚫 تم إلغاء الصلاحية" if action == "revoke" else "✅ تم منح الصلاحية"
+                # تحديث الزر
+                new_markup = telebot.types.InlineKeyboardMarkup()
+                if action == "revoke":
+                    new_markup.add(telebot.types.InlineKeyboardButton("✅ منح الصلاحية", callback_data=f"grant_{target_uid}"))
+                else:
+                    new_markup.add(telebot.types.InlineKeyboardButton("🚫 إلغاء الصلاحية", callback_data=f"revoke_{target_uid}"))
+                bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=new_markup)
+                bot.answer_callback_query(call.id, label)
+                # إشعار المستخدم
+                try:
+                    if action == "revoke":
+                        bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
+                    else:
+                        bot.send_message(int(target_uid), LANG["ar"]["approved"])
+                except:
+                    pass
+                return
+        bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
+    except Exception as e:
+        log_error(f"خطأ في تغيير الصلاحية: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ")
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
 def handle_approval(call):
     caller_id = call.from_user.id
@@ -923,12 +968,13 @@ def start_message(message):
 # ----- /lang -----
 @bot.message_handler(commands=['lang'])
 def language_command(message):
-    _, rejection, _ = get_settings()
-    if not check_user(message):
-        bot.send_message(message.chat.id, rejection)
-        return
     uid = message.from_user.id
     load_user_lang(uid)
+    _, rejection, _ = get_settings()
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
+    if not (open_all or uid in allowed_ids):
+        bot.send_message(message.chat.id, rejection)
+        return
     user_state[uid] = {"choosing_lang": True}
     bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
 
@@ -936,8 +982,11 @@ def language_command(message):
 @bot.message_handler(commands=['help'])
 def help_message(message):
     uid = message.from_user.id
-    admin = is_admin(message) or is_owner(message)
-    if admin:
+    load_user_lang(uid)
+    allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
+    admin = admin_all or uid in admin_ids
+    owner = uid in owner_ids
+    if admin or owner:
         bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=help_view_menu(uid))
         user_state[uid] = {"viewing_help": True}
     else:
@@ -1060,6 +1109,18 @@ def handle_message(message):
     admin = admin_all or uid in admin_ids
     owner = uid in owner_ids
 
+    # السماح بتغيير اللغة بدون صلاحية
+    if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
+        if text == "🇾🇪 العربية": user_lang[uid] = "ar"
+        elif text == "🇬🇧 English": user_lang[uid] = "en"
+        else:
+            bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
+            return
+        user_state.pop(uid, None)
+        save_user_lang_to_sheet(uid, user_lang.get(uid, "ar"))
+        bot.send_message(message.chat.id, "✅ تم تغيير اللغة!")
+        return
+
     if not is_allowed:
         contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
@@ -1087,17 +1148,6 @@ def handle_message(message):
         data = get_data()
 
         # ===== اختيار اللغة =====
-        if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
-            if text == "🇾🇪 العربية": user_lang[uid] = "ar"
-            elif text == "🇬🇧 English": user_lang[uid] = "en"
-            else:
-                bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
-                return
-            user_state.pop(uid, None)
-            save_user_lang_to_sheet(uid, user_lang.get(uid, "ar"))
-            bot.send_message(message.chat.id, welcome_msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
-            return
-
         # ===== عرض تعليمات البوت =====
         if state.get("viewing_help"):
             if text == t(uid, "view_user_help"):
@@ -1129,18 +1179,40 @@ def handle_message(message):
                 if len(rows) <= 1:
                     bot.send_message(message.chat.id, t(uid, "no_users"))
                     return
-                response = "👥 *قائمة المستخدمين:*\n" + "─" * 25 + "\n"
+                entries = []
+                empty_streak = 0
                 for row in rows[1:]:
+                    if not row or not any(c.strip() for c in row):
+                        empty_streak += 1
+                        if empty_streak >= 5: break
+                        continue
+                    empty_streak = 0
                     name = row[0].strip() if row else ""
-                    uid_str = row[2].strip() if len(row) > 2 else ""
+                    uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
                     allowed = row[3].strip().upper() if len(row) > 3 else "FALSE"
                     adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
                     own = row[5].strip().upper() if len(row) > 5 else "FALSE"
-                    if not name or name == "الكل": continue
-                    role = "👸 مالك" if own == "TRUE" else ("👑 أدمن" if adm == "TRUE" else "👤 مستخدم")
+                    if not name or name == "الكل" or not uid_str: continue
+                    role = "👑 مالك" if own == "TRUE" else ("👑 أدمن" if adm == "TRUE" else "👤 مستخدم")
                     status = "✅" if allowed == "TRUE" else "❌"
-                    response += f"{status} {name} ({uid_str}) — {role}\n"
-                bot.send_message(message.chat.id, response, parse_mode="Markdown")
+                    entries.append((status, name, uid_str, role, own, adm, allowed))
+
+                # ترتيب: مالك ← أدمن ← مستخدم
+                entries.sort(key=lambda x: (0 if x[4]=="TRUE" else 1 if x[5]=="TRUE" else 2))
+
+                # إرسال كل مستخدم كرسالة منفصلة مع زر إلغاء الصلاحية
+                header = "👥 *قائمة المستخدمين:*\n" + "─" * 25
+                bot.send_message(message.chat.id, header, parse_mode="Markdown")
+                for status, name, uid_str, role, own, adm, allowed in entries:
+                    msg = f"{status} *{name}*\n🆔 `{uid_str}`\n{role}"
+                    markup_inline = telebot.types.InlineKeyboardMarkup()
+                    if allowed == "TRUE":
+                        markup_inline.add(telebot.types.InlineKeyboardButton(
+                            "🚫 إلغاء الصلاحية", callback_data=f"revoke_{uid_str}"))
+                    else:
+                        markup_inline.add(telebot.types.InlineKeyboardButton(
+                            "✅ منح الصلاحية", callback_data=f"grant_{uid_str}"))
+                    bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
                 return
 
             if text == "🔄 تغيير صلاحية مستخدم":
