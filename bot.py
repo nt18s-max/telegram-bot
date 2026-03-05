@@ -881,9 +881,9 @@ def handle_role(call):
                             t_name = row2[0].strip()
                             t_phone = row2[1].strip() if len(row2) > 1 else ""
                             break
-                    new_role_icon = "👑" if new_own == "TRUE" else ("⭐" if new_adm == "TRUE" else ("✅" if new_allow == "TRUE" else "❌"))
+                    new_role_icon = "👑" if new_own == "TRUE" else ("⭐" if new_adm == "TRUE" else ("👤" if new_allow == "TRUE" else "❌"))
                     phone_line2 = f"\n📞 `{t_phone}`" if t_phone else ""
-                    padding2 = "\n" + "─" * 28
+                    padding2 = "\n───────────────────────"
                     new_text = f"{new_role_icon} *{t_name}*\n🆔 `{target_uid}`{phone_line2}{padding2}"
                     new_markup = telebot.types.InlineKeyboardMarkup(row_width=3)
                     new_markup.row(
@@ -1245,9 +1245,9 @@ def handle_message(message):
                     if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                         phone = row[1].strip() if len(row) > 1 else ""
                         break
-                role_icon = "👑" if own == "TRUE" else ("⭐" if adm == "TRUE" else ("✅" if allowed == "TRUE" else "❌"))
+                role_icon = "👑" if own == "TRUE" else ("⭐" if adm == "TRUE" else ("👤" if allowed == "TRUE" else "❌"))
                 phone_line = f"\n📞 `{phone}`" if phone else ""
-                padding = "\n" + "─" * 28
+                padding = "\n───────────────────────"
                 msg = f"{role_icon} *{name}*\n🆔 `{uid_str}`{phone_line}{padding}"
                 markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
                 markup_inline.row(
