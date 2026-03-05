@@ -805,7 +805,6 @@ def back_only_menu(uid):
 def manage_users_menu(uid):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add("📋 قائمة المستخدمين")
-    markup.add("🔄 تغيير صلاحية مستخدم")
     markup.add(t(uid, "back"))
     return markup
 
@@ -871,9 +870,9 @@ def handle_role(call):
 
                 # تحديث الأزرار
                 new_allow = row[3].strip().upper() if len(row) > 3 else "TRUE"
-                o_check = " ✓" if new_own == "TRUE" else ""
-                a_check = " ✓" if new_adm == "TRUE" and new_own != "TRUE" else ""
-                u_check = " ✓" if new_allow == "TRUE" and new_adm != "TRUE" and new_own != "TRUE" else ""
+                o_check = " ✓" if new_own == "TRUE" else "  "
+                a_check = " ✓" if new_adm == "TRUE" and new_own != "TRUE" else "  "
+                u_check = " ✓" if new_allow == "TRUE" and new_adm != "TRUE" and new_own != "TRUE" else "  "
                 new_markup = telebot.types.InlineKeyboardMarkup(row_width=3)
                 new_markup.row(
                     telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{target_uid}"),
@@ -1201,7 +1200,48 @@ def handle_message(message):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
                 return
             user_state[uid] = {"managing_users": True, "step": "menu"}
-            bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
+            # عرض القائمة مباشرة
+            rows = users_sheet.get_all_values()
+            if len(rows) <= 1:
+                bot.send_message(message.chat.id, t(uid, "no_users"))
+                return
+            entries = []
+            empty_streak = 0
+            for row in rows[1:]:
+                if not row or not any(c.strip() for c in row):
+                    empty_streak += 1
+                    if empty_streak >= 5: break
+                    continue
+                empty_streak = 0
+                name = row[0].strip() if row else ""
+                uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
+                allowed = row[3].strip().upper() if len(row) > 3 else "FALSE"
+                adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
+                own = row[5].strip().upper() if len(row) > 5 else "FALSE"
+                if not name or name == "الكل" or not uid_str: continue
+                status = "✅" if allowed == "TRUE" else "❌"
+                entries.append((status, name, uid_str, own, adm, allowed))
+            entries.sort(key=lambda x: (0 if x[3]=="TRUE" else 1 if x[4]=="TRUE" else 2))
+            header = "👥 *قائمة المستخدمين:*\n" + "─" * 25
+            bot.send_message(message.chat.id, header, parse_mode="Markdown", reply_markup=back_only_menu(uid))
+            for status, name, uid_str, own, adm, allowed in entries:
+                phone = ""
+                for row in rows[1:]:
+                    if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                        phone = row[1].strip() if len(row) > 1 else ""
+                        break
+                phone_line = f"\n📞 `{phone}`" if phone else ""
+                msg = f"{status} *{name}*\n🆔 `{uid_str}`{phone_line}"
+                o_check = " ✓" if own == "TRUE" else "  "
+                a_check = " ✓" if adm == "TRUE" and own != "TRUE" else "  "
+                u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else "  "
+                markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
+                markup_inline.row(
+                    telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{uid_str}"),
+                    telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{uid_str}"),
+                    telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{uid_str}")
+                )
+                bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
             return
 
         if state.get("managing_users"):
@@ -1246,9 +1286,9 @@ def handle_message(message):
                     phone_line = f"\n📞 `{phone}`" if phone else ""
                     msg = f"{status} *{name}*\n🆔 `{uid_str}`{phone_line}"
                     markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
-                    o_check = " ✓" if own == "TRUE" else ""
-                    a_check = " ✓" if adm == "TRUE" and own != "TRUE" else ""
-                    u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else ""
+                    o_check = " ✓" if own == "TRUE" else "  "
+                    a_check = " ✓" if adm == "TRUE" and own != "TRUE" else "  "
+                    u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else "  "
                     markup_inline.row(
                         telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{uid_str}"),
                         telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{uid_str}"),
