@@ -1,3 +1,4 @@
+
 # Telegram Bot Project by Naif Saba
 import telebot
 import gspread
@@ -868,8 +869,13 @@ def handle_role(call):
                     try: bot.send_message(int(target_uid), LANG["ar"]["approved"])
                     except: pass
 
-                # تحديث الأزرار
-                new_allow = row[3].strip().upper() if len(row) > 3 else "TRUE"
+                # تحديث الأزرار - نحسب new_allow بناءً على العملية
+                if new_role == "user" and cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
+                    new_allow = "FALSE"
+                elif new_role == "owner" and cur_own == "TRUE":
+                    new_allow = "TRUE"  # يبقى مسموح كمستخدم
+                else:
+                    new_allow = "TRUE"
                 # تحديث الإيموجي في الرسالة الأصلية
                 try:
                     cur_text = call.message.text or call.message.caption or ""
@@ -893,8 +899,9 @@ def handle_role(call):
                     )
                     bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id,
                                           parse_mode="Markdown", reply_markup=new_markup)
-                except:
-                    pass
+                except Exception as edit_err:
+                    if "message is not modified" not in str(edit_err):
+                        log_error(f"خطأ في تعديل رسالة الدور: {edit_err}")
                 bot.answer_callback_query(call.id, label)
                 return
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
