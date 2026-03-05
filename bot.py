@@ -1,4 +1,3 @@
-
 # Telegram Bot Project by Naif Saba
 import telebot
 import gspread
@@ -1318,40 +1317,7 @@ def handle_message(message):
                     bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
                 return
 
-            if text == "🔄 تغيير صلاحية مستخدم":
-                user_state[uid]["step"] = "enter_uid_role"
-                bot.send_message(message.chat.id, "أدخل معرف المستخدم (ID):", reply_markup=back_only_menu(uid))
-                return
 
-            if step == "enter_uid_role":
-                if text == back_btn:
-                    user_state[uid] = {"managing_users": True, "step": "menu"}
-                    bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
-                    return
-                if text.isdigit():
-                    user_state[uid]["target_uid"] = int(text)
-                    user_state[uid]["step"] = "choose_role"
-                    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-                    markup.add(t(uid, "make_admin"), t(uid, "make_user"), t(uid, "back"))
-                    bot.send_message(message.chat.id, "اختر الصلاحية الجديدة:", reply_markup=markup)
-                else:
-                    bot.send_message(message.chat.id, "❌ أدخل معرفاً رقمياً صحيحاً.")
-                return
-
-            if step == "choose_role":
-                target = state.get("target_uid")
-                if text == t(uid, "make_admin"):
-                    if update_user_role(target, True):
-                        bot.send_message(message.chat.id, t(uid, "role_changed"), reply_markup=manage_users_menu(uid))
-                    else:
-                        bot.send_message(message.chat.id, t(uid, "error"))
-                elif text == t(uid, "make_user"):
-                    if update_user_role(target, False):
-                        bot.send_message(message.chat.id, t(uid, "role_changed"), reply_markup=manage_users_menu(uid))
-                    else:
-                        bot.send_message(message.chat.id, t(uid, "error"))
-                user_state[uid] = {"managing_users": True, "step": "menu"}
-                return
 
         # ===== العودة =====
         if text == back_btn:
