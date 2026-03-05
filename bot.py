@@ -1108,6 +1108,8 @@ def handle_message(message):
     is_allowed = open_all or uid in allowed_ids
     admin = admin_all or uid in admin_ids
     owner = uid in owner_ids
+    text = message.text or ""
+    state = user_state.get(uid, {})
 
     # السماح بتغيير اللغة بدون صلاحية
     if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
@@ -1138,8 +1140,6 @@ def handle_message(message):
         return
 
     auto_register_user(message, open_all=open_all)
-    text = message.text
-    state = user_state.get(uid, {})
     back_btn = t(uid, "back")
 
     try:
