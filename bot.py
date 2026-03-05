@@ -356,7 +356,7 @@ def save_user_lang_to_sheet(uid, lang):
         return False
 
 def get_all_user_ids():
-    allowed, _, _, open_all, _ = get_users()
+    allowed, _, _, open_all, _, _ = get_users()
     return allowed, open_all
 
 def get_all_registered_uids():
@@ -383,11 +383,11 @@ def get_owner_ids():
     return owners
 
 def check_user(message):
-    allowed, _, _, open_all, _ = get_users()
+    allowed, _, _, open_all, _, _ = get_users()
     return open_all or message.from_user.id in allowed
 
 def is_admin(message):
-    _, admins, _, _, admin_all = get_users()
+    _, admins, _, _, admin_all, _ = get_users()
     return admin_all or message.from_user.id in admins
 
 def is_owner_id(uid):
@@ -408,7 +408,7 @@ def auto_register_user(message, open_all=None):
     """يسجل المستخدم تلقائياً إذا البوت مفتوح للكل"""
     try:
         if open_all is None:
-            _, _, _, open_all, _ = get_users()
+            _, _, _, open_all, _, _ = get_users()
         if not open_all:
             return
         rows = users_sheet.get_all_values()
