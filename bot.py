@@ -810,15 +810,16 @@ def manage_users_menu(uid):
     return markup
 
 # ----- Callback handler للموافقة/الرفض -----
-@bot.callback_query_handler(func=lambda call: call.data.startswith("revoke_") or call.data.startswith("grant_"))
-def handle_permission(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("role_"))
+def handle_role(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
         bot.answer_callback_query(call.id, "⛔ غير مسموح")
         return
-    parts = call.data.split("_", 1)
-    action = parts[0]
-    target_uid = parts[1]
+    # role_owner_UID أو role_admin_UID أو role_user_UID
+    parts = call.data.split("_", 2)
+    new_role = parts[1]   # owner / admin / user
+    target_uid = parts[2]
     try:
         rows = users_sheet.get_all_values()
         empty_streak = 0
@@ -830,29 +831,61 @@ def handle_permission(call):
             empty_streak = 0
             cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
             if cell_id == target_uid:
-                new_val = False if action == "revoke" else True
-                users_sheet.update_cell(i, 4, new_val)
-                label = "🚫 تم إلغاء الصلاحية" if action == "revoke" else "✅ تم منح الصلاحية"
-                # تحديث الزر
-                new_markup = telebot.types.InlineKeyboardMarkup()
-                if action == "revoke":
-                    new_markup.add(telebot.types.InlineKeyboardButton("✅ منح الصلاحية", callback_data=f"grant_{target_uid}"))
-                else:
-                    new_markup.add(telebot.types.InlineKeyboardButton("🚫 إلغاء الصلاحية", callback_data=f"revoke_{target_uid}"))
+                cur_own = row[5].strip().upper() if len(row) > 5 else "FALSE"
+                cur_adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
+                cur_allow = row[3].strip().upper() if len(row) > 3 else "FALSE"
+
+                # الضغط على الدور الحالي يلغيه
+                if new_role == "owner" and cur_own == "TRUE":
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "تم إلغاء صلاحية المالك"
+                    new_own, new_adm = "FALSE", "FALSE"
+                elif new_role == "admin" and cur_adm == "TRUE" and cur_own != "TRUE":
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "تم إلغاء صلاحية الأدمن"
+                    new_own, new_adm = "FALSE", "FALSE"
+                elif new_role == "user" and cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
+                    users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
+                    label = "⛔ تم إلغاء الصلاحية"
+                    new_own, new_adm = "FALSE", "FALSE"
+                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
+                    except: pass
+                elif new_role == "owner":
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
+                    label = "👑 تم تعيين مالك"
+                    new_own, new_adm = "TRUE", "TRUE"
+                    try: bot.send_message(int(target_uid), "👑 تمت ترقيتك إلى مالك!")
+                    except: pass
+                elif new_role == "admin":
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
+                    label = "⚙️ تم تعيين أدمن"
+                    new_own, new_adm = "FALSE", "TRUE"
+                    try: bot.send_message(int(target_uid), "⚙️ تمت ترقيتك إلى أدمن!")
+                    except: pass
+                else:  # user
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "👤 تم تعيين مستخدم"
+                    new_own, new_adm = "FALSE", "FALSE"
+                    try: bot.send_message(int(target_uid), LANG["ar"]["approved"])
+                    except: pass
+
+                # تحديث الأزرار
+                new_allow = row[3].strip().upper() if len(row) > 3 else "TRUE"
+                o_check = " ✓" if new_own == "TRUE" else ""
+                a_check = " ✓" if new_adm == "TRUE" and new_own != "TRUE" else ""
+                u_check = " ✓" if new_allow == "TRUE" and new_adm != "TRUE" and new_own != "TRUE" else ""
+                new_markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+                new_markup.row(
+                    telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{target_uid}"),
+                    telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{target_uid}"),
+                    telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{target_uid}")
+                )
                 bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=new_markup)
                 bot.answer_callback_query(call.id, label)
-                # إشعار المستخدم
-                try:
-                    if action == "revoke":
-                        bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
-                    else:
-                        bot.send_message(int(target_uid), LANG["ar"]["approved"])
-                except:
-                    pass
                 return
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
     except Exception as e:
-        log_error(f"خطأ في تغيير الصلاحية: {e}")
+        log_error(f"خطأ في تغيير الدور: {e}")
         bot.answer_callback_query(call.id, "❌ حدث خطأ")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
@@ -1200,18 +1233,27 @@ def handle_message(message):
                 # ترتيب: مالك ← أدمن ← مستخدم
                 entries.sort(key=lambda x: (0 if x[4]=="TRUE" else 1 if x[5]=="TRUE" else 2))
 
-                # إرسال كل مستخدم كرسالة منفصلة مع زر إلغاء الصلاحية
+                # إرسال كل مستخدم كرسالة منفصلة مع أزرار الدور
                 header = "👥 *قائمة المستخدمين:*\n" + "─" * 25
                 bot.send_message(message.chat.id, header, parse_mode="Markdown")
                 for status, name, uid_str, role, own, adm, allowed in entries:
-                    msg = f"{status} *{name}*\n🆔 `{uid_str}`\n{role}"
-                    markup_inline = telebot.types.InlineKeyboardMarkup()
-                    if allowed == "TRUE":
-                        markup_inline.add(telebot.types.InlineKeyboardButton(
-                            "🚫 إلغاء الصلاحية", callback_data=f"revoke_{uid_str}"))
-                    else:
-                        markup_inline.add(telebot.types.InlineKeyboardButton(
-                            "✅ منح الصلاحية", callback_data=f"grant_{uid_str}"))
+                    # جلب رقم الهاتف
+                    phone = ""
+                    for row in rows[1:]:
+                        if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                            phone = row[1].strip() if len(row) > 1 else ""
+                            break
+                    phone_line = f"\n📞 `{phone}`" if phone else ""
+                    msg = f"{status} *{name}*\n🆔 `{uid_str}`{phone_line}"
+                    markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
+                    o_check = " ✓" if own == "TRUE" else ""
+                    a_check = " ✓" if adm == "TRUE" and own != "TRUE" else ""
+                    u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else ""
+                    markup_inline.row(
+                        telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{uid_str}"),
+                        telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{uid_str}"),
+                        telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{uid_str}")
+                    )
                     bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
                 return
 
