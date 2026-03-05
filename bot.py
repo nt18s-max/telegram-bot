@@ -1173,7 +1173,7 @@ def handle_message(message):
             return
         user_state.pop(uid, None)
         save_user_lang_to_sheet(uid, user_lang.get(uid, "ar"))
-        bot.send_message(message.chat.id, "✅ تم تغيير اللغة!")
+        bot.send_message(message.chat.id, "✅ تم تغيير اللغة!", reply_markup=telebot.types.ReplyKeyboardRemove())
         return
 
     if not is_allowed:
