@@ -870,16 +870,31 @@ def handle_role(call):
 
                 # تحديث الأزرار
                 new_allow = row[3].strip().upper() if len(row) > 3 else "TRUE"
-                o_check = " ✓" if new_own == "TRUE" else "  "
-                a_check = " ✓" if new_adm == "TRUE" and new_own != "TRUE" else "  "
-                u_check = " ✓" if new_allow == "TRUE" and new_adm != "TRUE" and new_own != "TRUE" else "  "
-                new_markup = telebot.types.InlineKeyboardMarkup(row_width=3)
-                new_markup.row(
-                    telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{target_uid}"),
-                    telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{target_uid}"),
-                    telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{target_uid}")
-                )
-                bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=new_markup)
+                # تحديث الإيموجي في الرسالة الأصلية
+                try:
+                    cur_text = call.message.text or call.message.caption or ""
+                    # استخراج الاسم والمعلومات من الرسالة الحالية
+                    rows2 = users_sheet.get_all_values()
+                    t_name, t_phone = "", ""
+                    for row2 in rows2[1:]:
+                        if len(row2) > 2 and row2[2].strip().lstrip("'") == target_uid:
+                            t_name = row2[0].strip()
+                            t_phone = row2[1].strip() if len(row2) > 1 else ""
+                            break
+                    new_role_icon = "👑" if new_own == "TRUE" else ("⭐" if new_adm == "TRUE" else ("✅" if new_allow == "TRUE" else "❌"))
+                    phone_line2 = f"\n📞 `{t_phone}`" if t_phone else ""
+                    padding2 = "\n" + "─" * 28
+                    new_text = f"{new_role_icon} *{t_name}*\n🆔 `{target_uid}`{phone_line2}{padding2}"
+                    new_markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+                    new_markup.row(
+                        telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"role_owner_{target_uid}"),
+                        telebot.types.InlineKeyboardButton("⭐ أدمن", callback_data=f"role_admin_{target_uid}"),
+                        telebot.types.InlineKeyboardButton("👤 مستخدم", callback_data=f"role_user_{target_uid}")
+                    )
+                    bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id,
+                                          parse_mode="Markdown", reply_markup=new_markup)
+                except:
+                    pass
                 bot.answer_callback_query(call.id, label)
                 return
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
@@ -1230,16 +1245,15 @@ def handle_message(message):
                     if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                         phone = row[1].strip() if len(row) > 1 else ""
                         break
+                role_icon = "👑" if own == "TRUE" else ("⭐" if adm == "TRUE" else ("✅" if allowed == "TRUE" else "❌"))
                 phone_line = f"\n📞 `{phone}`" if phone else ""
-                msg = f"{status} *{name}*\n🆔 `{uid_str}`{phone_line}"
-                o_check = " ✓" if own == "TRUE" else "  "
-                a_check = " ✓" if adm == "TRUE" and own != "TRUE" else "  "
-                u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else "  "
+                padding = "\n" + "─" * 28
+                msg = f"{role_icon} *{name}*\n🆔 `{uid_str}`{phone_line}{padding}"
                 markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
                 markup_inline.row(
-                    telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{uid_str}"),
-                    telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{uid_str}"),
-                    telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{uid_str}")
+                    telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"role_owner_{uid_str}"),
+                    telebot.types.InlineKeyboardButton("⭐ أدمن", callback_data=f"role_admin_{uid_str}"),
+                    telebot.types.InlineKeyboardButton("👤 مستخدم", callback_data=f"role_user_{uid_str}")
                 )
                 bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
             return
