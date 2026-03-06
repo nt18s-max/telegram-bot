@@ -8,8 +8,11 @@ import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
+import pytz
 
 load_dotenv()
+
+YEMEN_TZ = pytz.timezone('Asia/Aden')
 
 import logging
 import requests as _requests
@@ -29,7 +32,7 @@ def tg_log(level, msg):
     """يرسل اللوج لبوت التيليغرام"""
     icons = {"INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
     icon = icons.get(level, "📋")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(YEMEN_TZ).strftime("%Y-%m-%d %H:%M:%S")
     text = f"{icon} *{level}*\n`{now}`\n\n{msg}"
     if LOG_BOT_TOKEN:
         # قراءة مباشرة من الشيت بدون دالة منفصلة
@@ -517,7 +520,7 @@ def get_data():
         return []
 
 def send_today_date(chat_id, tomorrow=False, uid=None):
-    dt = datetime.now() + timedelta(days=1) if tomorrow else datetime.now()
+    dt = datetime.now(YEMEN_TZ) + timedelta(days=1) if tomorrow else datetime.now(YEMEN_TZ)
     d = dt.strftime("%d/%m/%Y")
     day_ar = DAYS_AR[dt.weekday()]
     label = "📅 مقترح (غداً):" if tomorrow else "📅 مقترح (اليوم):"
