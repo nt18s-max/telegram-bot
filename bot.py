@@ -1,4 +1,6 @@
-# Telegram Bot Project by Naif Saba
+# ====================================================
+# bot1.py — بوت الدراسة (البوت الأول)
+# ====================================================
 import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -6,36 +8,56 @@ from datetime import datetime, timedelta
 import os
 import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 import pytz
+import logging
+import requests as _requests
 
 load_dotenv()
 
 YEMEN_TZ = pytz.timezone('Asia/Aden')
 
-import logging
-import requests as _requests
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+logger = logging.getLogger("Bot1Logger")
 
-# ===== نظام Logging =====
-LOG_BOT_TOKEN = os.environ.get("LOG_BOT_TOKEN", "")
-LOG_CHAT_ID = ""
+LOG_BOT_TOKEN = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger("BotLogger")
+STUDY_BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "")
+SHEET_KEY = os.environ.get("SHEET_KEY", "")
+
+bot = telebot.TeleBot(STUDY_BOT_TOKEN)
+
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+try:
+    google_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if google_creds_json:
+        creds_dict = json.loads(google_creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_KEY)
+    sheet = spreadsheet.sheet1
+    users_sheet = spreadsheet.worksheet("المستخدمين")
+    help_sheet = spreadsheet.worksheet("المساعدة")
+    try:
+        rooms_sheet = spreadsheet.worksheet("القاعات")
+    except:
+        rooms_sheet = None
+except Exception as e:
+    logger.critical(f"خطأ في الاتصال بـ Google Sheets: {e}")
+    sheet = None
+    users_sheet = None
+    help_sheet = None
+    rooms_sheet = None
 
 def tg_log(level, msg):
-    """يرسل اللوج لبوت التيليغرام"""
     icons = {"INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
     icon = icons.get(level, "📋")
     now = datetime.now(YEMEN_TZ).strftime("%Y-%m-%d %H:%M:%S")
     text = f"{icon} *{level}*\n`{now}`\n\n{msg}"
     if LOG_BOT_TOKEN:
-        # قراءة مباشرة من الشيت بدون دالة منفصلة
         recipients = []
         try:
             if users_sheet:
@@ -69,42 +91,11 @@ def log_warning(msg):  tg_log("WARNING", msg)
 def log_error(msg):    tg_log("ERROR", msg)
 def log_critical(msg): tg_log("CRITICAL", msg)
 
-TOKEN = os.environ.get("BOT_TOKEN", "")
-SHEET_KEY = os.environ.get("SHEET_KEY", "")
-
-bot = telebot.TeleBot(TOKEN)
-
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-try:
-    google_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
-    if google_creds_json:
-        creds_dict = json.loads(google_creds_json)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    else:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key(SHEET_KEY)
-    sheet = spreadsheet.sheet1
-    users_sheet = spreadsheet.worksheet("المستخدمين")
-    help_sheet = spreadsheet.worksheet("المساعدة")
-    try:
-        rooms_sheet = spreadsheet.worksheet("القاعات")
-    except:
-        rooms_sheet = None
-except Exception as e:
-    log_critical(f"خطأ في الاتصال بـ Google Sheets: {e}")
-    sheet = None
-    users_sheet = None
-    help_sheet = None
-    rooms_sheet = None
-
 user_state = {}
 user_lang = {}
-pending_requests = set()  # يتتبع من أرسل طلب انضمام في هذه الجلسة
+pending_requests = set()
 
 def is_pending(uid):
-    """يتحقق إذا المستخدم أرسل طلب من قبل - من الذاكرة أو الشيت"""
     if uid in pending_requests:
         return True
     try:
@@ -240,11 +231,9 @@ def t(uid, key):
     return LANG[lang].get(key, LANG["ar"].get(key, key))
 
 def load_user_lang(uid):
-    """يقرأ اللغة من الشيت مرة واحدة ويحفظها في الذاكرة"""
     if uid not in user_lang:
         user_lang[uid] = get_user_lang_from_sheet(uid)
 
-# ----- قراءة الإعدادات -----
 def get_settings():
     try:
         rows = help_sheet.get_all_values()
@@ -252,17 +241,13 @@ def get_settings():
         rejection = "⛔ غير مسموح لك باستخدام البوت\n\nالرجاء طلب الصلاحية من منشئ البوت\n                         @nt18s"
         materials = []
         for row in rows[:2]:
-            if not row:
-                continue
+            if not row: continue
             key = row[0].strip()
             val = row[1].strip() if len(row) > 1 else ""
-            if key == "رسالة_الترحيب":
-                welcome = val
-            elif key == "رسالة_الرفض":
-                rejection = val
+            if key == "رسالة_الترحيب": welcome = val
+            elif key == "رسالة_الرفض": rejection = val
         for row in rows[3:]:
-            if not row or not any(r.strip() for r in row):
-                continue
+            if not row or not any(r.strip() for r in row): continue
             file_id = row[1].strip() if len(row) > 1 else ""
             file_type = row[2].strip() if len(row) > 2 and row[2].strip() else ""
             audience = row[3].strip() if len(row) > 3 and row[3].strip() else "user"
@@ -289,14 +274,12 @@ def get_subjects():
 
 def get_rooms(building):
     try:
-        if not rooms_sheet:
-            return []
+        if not rooms_sheet: return []
         rows = rooms_sheet.get_all_values()
         return [row[1].strip() for row in rows if len(row) > 1 and row[0].strip() == building and row[1].strip()]
     except:
         return []
 
-# ----- صلاحيات - الشيت الثاني: A=الاسم B=ID C=مسموح D=ادمن E=مالك F=English -----
 def get_users():
     try:
         rows = users_sheet.get_all_values()
@@ -306,8 +289,7 @@ def get_users():
         for row in rows[1:]:
             if not row or not any(c.strip() for c in row):
                 empty_streak += 1
-                if empty_streak >= 5:
-                    break
+                if empty_streak >= 5: break
                 continue
             empty_streak = 0
             name = row[0].strip()
@@ -320,8 +302,7 @@ def get_users():
                 if allowed_val == "TRUE": open_all = True
                 if admin_val == "TRUE": admin_all = True
                 continue
-            if not uid_str.isdigit():
-                continue
+            if not uid_str.isdigit(): continue
             uid = int(uid_str)
             if allowed_val == "TRUE": allowed.append(uid)
             if admin_val == "TRUE": admins.append(uid)
@@ -333,7 +314,6 @@ def get_users():
         return [], [], [], False, False, []
 
 def get_user_lang_from_sheet(uid):
-    """يقرأ اللغة من عمود F في الشيت"""
     try:
         rows = users_sheet.get_all_values()
         for row in rows[1:]:
@@ -346,7 +326,6 @@ def get_user_lang_from_sheet(uid):
         return "ar"
 
 def save_user_lang_to_sheet(uid, lang):
-    """يحفظ اللغة في عمود F"""
     try:
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
@@ -363,7 +342,6 @@ def get_all_user_ids():
     return allowed, open_all
 
 def get_all_registered_uids():
-    """يجلب كل المعرفات المسجلة بما فيهم المضافون تلقائياً"""
     try:
         rows = users_sheet.get_all_values()
         uids = []
@@ -408,17 +386,15 @@ def add_user_to_sheet(name, uid, auto=False, allowed=True):
         return False
 
 def auto_register_user(message, open_all=None):
-    """يسجل المستخدم تلقائياً بدون صلاحية — open_all يتجاوز التحقق فقط"""
     try:
         if open_all is None:
             _, _, _, open_all, _, _ = get_users()
-        if not open_all:
-            return
+        if not open_all: return
         rows = users_sheet.get_all_values()
         uid_str = str(message.from_user.id)
         for row in rows[1:]:
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                return  # موجود مسبقاً
+                return
         name = message.from_user.full_name or "مجهول"
         add_user_to_sheet(name, message.from_user.id, auto=True, allowed=False)
     except:
@@ -436,7 +412,6 @@ def update_user_role(uid, make_admin):
     except:
         return False
 
-# ----- مساعدات الخلية -----
 def get_text(cell):
     return cell.split("|")[0].strip() if "|" in cell else cell.strip()
 
@@ -462,8 +437,7 @@ def get_last_date(data, col):
                 dates.append(parse_date(d))
             except:
                 pass
-    if not dates:
-        return None
+    if not dates: return None
     return sorted(dates, key=lambda x: datetime.strptime(x, "%d/%m/%Y"))[-1]
 
 def safe_get(row, idx):
@@ -479,7 +453,6 @@ def parse_date(date_str):
     return date_str.strip()
 
 def is_valid_date(date_str):
-    """يتحقق أن التاريخ صحيح ومقبول"""
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
         try:
             datetime.strptime(date_str.strip(), fmt)
@@ -489,12 +462,9 @@ def is_valid_date(date_str):
     return False
 
 def normalize_time(time_str):
-    """يوحد تنسيق الوقت: 8:00–10:00 أو 8:00-10:00 → 08:00 - 10:00"""
     import re
     t = time_str.strip().replace("–", "-").replace("—", "-")
-    # إزالة المسافات الزائدة حول -
     t = re.sub(r'\s*-\s*', ' - ', t)
-    # إضافة صفر للأرقام المفردة مثل 8:00 → 08:00
     def pad_time(m):
         h, mi = m.group(1), m.group(2)
         return f"{int(h):02d}:{mi}"
@@ -504,7 +474,6 @@ def normalize_time(time_str):
 def get_data():
     try:
         rows = sheet.get_all_values()[1:]
-        # فلترة الصفوف التي تحتوي تاريخ ومادة فقط بدون أي بيانات أخرى
         useful = []
         for r in rows:
             has_time    = len(r) > 2 and r[2].strip()
@@ -563,13 +532,11 @@ def save_text_to_cell(date, subject, col, text_val):
         return False
 
 def parse_time_range(time_str):
-    """يحول '08:00 - 10:00' إلى (480, 600) دقائق"""
     import re
     t = normalize_time(time_str)
     sep = r'\s*-\s*'
     parts = re.split(sep, t)
-    if len(parts) != 2:
-        return None, None
+    if len(parts) != 2: return None, None
     def to_minutes(s):
         s = s.strip()
         h, m = s.split(":") if ":" in s else (s, "0")
@@ -580,33 +547,23 @@ def parse_time_range(time_str):
         return None, None
 
 def check_lecture_conflict(date, time_val):
-    """يتحقق من التداخل الزمني مع أي محاضرة في نفس اليوم"""
     try:
         new_start, new_end = parse_time_range(time_val)
-        if new_start is None:
-            return None
+        if new_start is None: return None
         rows = get_data()
         for row in rows:
             r_date = parse_date(safe_get(row, 0))
             r_time = safe_get(row, 2)
-            if r_date != date or not r_time.strip():
-                continue
+            if r_date != date or not r_time.strip(): continue
             ex_start, ex_end = parse_time_range(r_time)
-            if ex_start is None:
-                continue
-            # تحقق من التداخل: الجديد يبدأ قبل نهاية القديم والقديم يبدأ قبل نهاية الجديد
+            if ex_start is None: continue
             if new_start < ex_end and ex_start < new_end:
-                return {
-                    "subject": safe_get(row, 1),
-                    "room": safe_get(row, 3),
-                    "time": normalize_time(r_time)
-                }
+                return {"subject": safe_get(row, 1), "room": safe_get(row, 3), "time": normalize_time(r_time)}
     except:
         pass
     return None
 
 def save_lecture(date, subject, time_val, room):
-    """يحفظ وقت ومكان المحاضرة في نفس السطر دفعة واحدة"""
     try:
         rows = sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
@@ -639,7 +596,6 @@ def delete_cell(date, subject, col):
 def save_help_material(file_id, file_type, audience, note=""):
     try:
         rows = help_sheet.get_all_values()
-        # أول سطر فارغ من السطر 3 فصاعداً (تجاوز صفي الإعدادات)
         next_row = max(4, len(rows) + 1)
         help_sheet.update([[file_id, file_type, audience, note]], f"B{next_row}:E{next_row}")
         help_sheet.update([["مادة مساعدة"]], f"A{next_row}")
@@ -658,8 +614,7 @@ def send_help_materials(chat_id, uid, audience_filter):
     bot.send_message(chat_id, f"*{title}*", parse_mode="Markdown")
     for m in filtered:
         fid, ftype, note = m["file_id"], m["file_type"], m["note"]
-        if note:
-            bot.send_message(chat_id, note)
+        if note: bot.send_message(chat_id, note)
         if fid:
             try:
                 if ftype == "photo": bot.send_photo(chat_id, fid)
@@ -685,7 +640,6 @@ def notify_owners_new_request(requester_id, requester_name):
         except:
             pass
 
-# ----- قوائم -----
 def lang_menu():
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add("🇾🇪 العربية", "🇬🇧 English")
@@ -694,22 +648,12 @@ def lang_menu():
 def main_menu(uid, admin=False, owner=False):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     markup.add(t(uid, "subjects"))
-    markup.row(
-        telebot.types.KeyboardButton(t(uid, "tasks")),
-        telebot.types.KeyboardButton(t(uid, "schedule"))
-    )
-    markup.row(
-        telebot.types.KeyboardButton(t(uid, "alerts")),
-        telebot.types.KeyboardButton(t(uid, "prices"))
-    )
+    markup.row(telebot.types.KeyboardButton(t(uid, "tasks")), telebot.types.KeyboardButton(t(uid, "schedule")))
+    markup.row(telebot.types.KeyboardButton(t(uid, "alerts")), telebot.types.KeyboardButton(t(uid, "prices")))
     if admin or owner:
         markup.add(t(uid, "add_data"))
         markup.add(t(uid, "edit_data"))
-        markup.row(
-            telebot.types.KeyboardButton(t(uid, "upload_help")),
-            telebot.types.KeyboardButton(t(uid, "upload_file")),
-            telebot.types.KeyboardButton(t(uid, "broadcast"))
-        )
+        markup.row(telebot.types.KeyboardButton(t(uid, "upload_help")), telebot.types.KeyboardButton(t(uid, "upload_file")), telebot.types.KeyboardButton(t(uid, "broadcast")))
     if owner:
         markup.add(t(uid, "manage_users"))
     return markup
@@ -724,8 +668,7 @@ def subjects_menu(uid):
 
 def subject_options_menu(uid):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    for k in ["subject_options_schedule", "subject_options_tasks", "subject_options_price",
-               "subject_options_summary", "subject_options_alerts"]:
+    for k in ["subject_options_schedule", "subject_options_tasks", "subject_options_price", "subject_options_summary", "subject_options_alerts"]:
         markup.add(t(uid, k))
     markup.add(t(uid, "back"))
     return markup
@@ -811,16 +754,40 @@ def manage_users_menu(uid):
     markup.add(t(uid, "back"))
     return markup
 
-# ----- Callback handler للموافقة/الرفض -----
+def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
+    uids, open_all = get_all_user_ids()
+    if open_all:
+        registered = get_all_registered_uids()
+        if registered:
+            uids = registered
+        if not uids:
+            bot.send_message(chat_id, "⚠️ لا يوجد مستخدمون مسجلون بعد.")
+            return
+    success = fail = 0
+    for user_id in uids:
+        try:
+            if text_msg:
+                bot.send_message(user_id, "📢 *إشعار:*\n\n" + text_msg, parse_mode="Markdown")
+            if file_id:
+                if file_type == "photo": bot.send_photo(user_id, file_id)
+                elif file_type == "audio": bot.send_audio(user_id, file_id)
+                elif file_type == "voice": bot.send_voice(user_id, file_id)
+                elif file_type == "video": bot.send_video(user_id, file_id)
+                else: bot.send_document(user_id, file_id)
+            success += 1
+        except:
+            fail += 1
+    bot.send_message(chat_id, t(uid, 'broadcast_done') + f"\n✅ {success} | ❌ {fail}",
+                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("role_"))
 def handle_role(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
         bot.answer_callback_query(call.id, "⛔ غير مسموح")
         return
-    # role_owner_UID أو role_admin_UID أو role_user_UID
     parts = call.data.split("_", 2)
-    new_role = parts[1]   # owner / admin / user
+    new_role = parts[1]
     target_uid = parts[2]
     try:
         rows = users_sheet.get_all_values()
@@ -836,8 +803,6 @@ def handle_role(call):
                 cur_own = row[5].strip().upper() if len(row) > 5 else "FALSE"
                 cur_adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
                 cur_allow = row[3].strip().upper() if len(row) > 3 else "FALSE"
-
-                # الضغط على الدور الحالي يلغيه
                 if new_role == "owner" and cur_own == "TRUE":
                     users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                     label = "تم إلغاء صلاحية المالك"
@@ -864,24 +829,17 @@ def handle_role(call):
                     new_own, new_adm = "FALSE", "TRUE"
                     try: bot.send_message(int(target_uid), "⚙️ تمت ترقيتك إلى أدمن!")
                     except: pass
-                else:  # user
+                else:
                     users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                     label = "👤 تم تعيين مستخدم"
                     new_own, new_adm = "FALSE", "FALSE"
                     try: bot.send_message(int(target_uid), LANG["ar"]["approved"])
                     except: pass
-
-                # تحديث الأزرار - نحسب new_allow بناءً على العملية
                 if new_role == "user" and cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
                     new_allow = "FALSE"
-                elif new_role == "owner" and cur_own == "TRUE":
-                    new_allow = "TRUE"  # يبقى مسموح كمستخدم
                 else:
                     new_allow = "TRUE"
-                # تحديث الإيموجي في الرسالة الأصلية
                 try:
-                    cur_text = call.message.text or call.message.caption or ""
-                    # استخراج الاسم والمعلومات من الرسالة الحالية
                     rows2 = users_sheet.get_all_values()
                     t_name, t_phone = "", ""
                     for row2 in rows2[1:]:
@@ -917,12 +875,10 @@ def handle_approval(call):
     if not is_owner_id(caller_id):
         bot.answer_callback_query(call.id, "⛔ غير مسموح")
         return
-
     if call.data.startswith("approve_"):
         parts = call.data.split("_", 2)
         requester_id = int(parts[1])
         requester_name = parts[2] if len(parts) > 2 else "مستخدم"
-        # ابحث عن السطر الموجود وحدّثه بدل إضافة سطر جديد
         try:
             rows = users_sheet.get_all_values()
             uid_str = str(requester_id)
@@ -936,7 +892,7 @@ def handle_approval(call):
                 empty_streak = 0
                 cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
                 if cell_id == uid_str:
-                    users_sheet.update_cell(i, 4, True)  # مسموح = TRUE
+                    users_sheet.update_cell(i, 4, True)
                     found = True
                     break
             if not found:
@@ -951,7 +907,6 @@ def handle_approval(call):
         except Exception as e:
             log_error(f"خطأ في الموافقة: {e}")
             bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
-
     elif call.data.startswith("reject_"):
         requester_id = int(call.data.split("_")[1])
         pending_requests.discard(requester_id)
@@ -961,37 +916,8 @@ def handle_approval(call):
             pass
         bot.edit_message_text(f"❌ تم رفض الطلب ({requester_id})",
                               call.message.chat.id, call.message.message_id)
-
     bot.answer_callback_query(call.id)
 
-def _do_broadcast(chat_id, uid, admin, owner, text_msg, file_id, file_type):
-    uids, open_all = get_all_user_ids()
-    if open_all:
-        registered = get_all_registered_uids()
-        if registered:
-            uids = registered
-        # إذا لم يكن أحد مسجلاً نرسل لمن في القائمة العادية فقط
-        if not uids:
-            bot.send_message(chat_id, "⚠️ لا يوجد مستخدمون مسجلون بعد.")
-            return
-    success = fail = 0
-    for user_id in uids:
-        try:
-            if text_msg:
-                bot.send_message(user_id, "📢 *إشعار:*\n\n" + text_msg, parse_mode="Markdown")
-            if file_id:
-                if file_type == "photo": bot.send_photo(user_id, file_id)
-                elif file_type == "audio": bot.send_audio(user_id, file_id)
-                elif file_type == "voice": bot.send_voice(user_id, file_id)
-                elif file_type == "video": bot.send_video(user_id, file_id)
-                else: bot.send_document(user_id, file_id)
-            success += 1
-        except:
-            fail += 1
-    bot.send_message(chat_id, t(uid, 'broadcast_done') + f"\n✅ {success} | ❌ {fail}",
-                     reply_markup=main_menu(uid, admin=admin, owner=owner))
-
-# ----- /start -----
 @bot.message_handler(commands=['start'])
 def start_message(message):
     _, rejection, _ = get_settings()
@@ -1000,19 +926,12 @@ def start_message(message):
     allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
     is_allowed = open_all or uid in allowed_ids
     if not is_allowed:
-        owners = owner_ids
-        if owners:
-            if not is_pending(uid):
-                pending_requests.add(uid)
-            bot.send_message(message.chat.id, rejection)
-            contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
-            bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
-        else:
-            bot.send_message(message.chat.id, rejection)
-            contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-            contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
-            bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
+        if not is_pending(uid):
+            pending_requests.add(uid)
+        bot.send_message(message.chat.id, rejection)
+        contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
+        bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
         return
     user_state.pop(uid, None)
     welcome, _, _ = get_settings()
@@ -1021,13 +940,10 @@ def start_message(message):
     log_info(f"START | uid={uid} | name={message.from_user.full_name} | admin={admin} | owner={owner}")
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
 
-# ----- /lang -----
 @bot.message_handler(commands=['server'])
 def server_command(message):
     inline = telebot.types.InlineKeyboardMarkup()
-    inline.add(telebot.types.InlineKeyboardButton(
-        "🔄 تشغيل البوت", url="https://telegram-bot1-cxnc.onrender.com"
-    ))
+    inline.add(telebot.types.InlineKeyboardButton("🔄 تشغيل البوت", url="https://telegram-bot1-cxnc.onrender.com"))
     bot.send_message(message.chat.id, "اضغط الزر لتشغيل البوت:", reply_markup=inline)
 
 @bot.message_handler(commands=['lang'])
@@ -1042,7 +958,6 @@ def language_command(message):
     user_state[uid] = {"choosing_lang": True}
     bot.send_message(message.chat.id, "🌐 اختر اللغة / Choose Language", reply_markup=lang_menu())
 
-# ----- /help -----
 @bot.message_handler(commands=['help'])
 def help_message(message):
     uid = message.from_user.id
@@ -1056,15 +971,12 @@ def help_message(message):
     else:
         send_help_materials(message.chat.id, uid, "user")
 
-# ----- استقبال جهة الاتصال -----
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     uid = message.from_user.id
     contact = message.contact
     phone = contact.phone_number if contact else ""
     name = message.from_user.full_name or "مجهول"
-
-    # إشعار المالك برسالة موحدة مع أزرار القبول/الرفض
     owners = get_owner_ids()
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
@@ -1078,8 +990,6 @@ def handle_contact(message):
             bot.send_message(owner_id, msg, parse_mode="Markdown", reply_markup=markup)
         except:
             pass
-
-    # حفظ الاسم + الرقم + الهاتف معاً — تحديث إذا موجود أو إضافة إذا جديد
     try:
         rows = users_sheet.get_all_values()
         uid_str = str(uid)
@@ -1093,19 +1003,15 @@ def handle_contact(message):
             empty_streak = 0
             cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
             if cell_id == uid_str:
-                # تحديث الاسم والهاتف في نفس الوقت
                 users_sheet.update(f"A{i}:B{i}", [[name, phone]])
                 found = True
                 break
         if not found:
-            # إضافة سطر جديد بالاسم والهاتف والـ ID بدون صلاحية
             users_sheet.append_row([name, phone, uid, False, False, False, False], value_input_option="USER_ENTERED")
     except Exception as e:
         log_error(f"خطأ في حفظ جهة الاتصال: {e}")
-
     bot.send_message(message.chat.id, "✅ شكراً! تم إرسال معلوماتك.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
-# ----- استقبال الملفات -----
 @bot.message_handler(content_types=['document', 'photo', 'video', 'audio', 'voice'])
 def handle_file(message):
     uid = message.from_user.id
@@ -1122,16 +1028,13 @@ def handle_file(message):
     if not (f_admin or f_owner):
         bot.send_message(message.chat.id, t(uid, "admin_only"))
         return
-
     state = user_state.get(uid, {})
-
     if message.document: file_id, ftype = message.document.file_id, "document"
     elif message.photo: file_id, ftype = message.photo[-1].file_id, "photo"
     elif message.video: file_id, ftype = message.video.file_id, "video"
     elif message.audio: file_id, ftype = message.audio.file_id, "audio"
     elif message.voice: file_id, ftype = message.voice.file_id, "voice"
     else: return
-
     if state.get("uploading_help") and state.get("step") == "waiting_file_help":
         audience = state.get("audience", "user")
         note = state.get("note", "")
@@ -1143,7 +1046,6 @@ def handle_file(message):
             bot.send_message(message.chat.id, t(uid, "help_error"))
         user_state.pop(uid, None)
         return
-
     if state.get("broadcasting"):
         user_state[uid]["broadcast_file_id"] = file_id
         user_state[uid]["broadcast_file_type"] = ftype
@@ -1151,22 +1053,18 @@ def handle_file(message):
                       state.get("broadcast_text", ""), file_id, ftype)
         user_state.pop(uid, None)
         return
-
     if state.get("uploading") and state.get("step") == "waiting_file":
         user_state[uid]["file_id"] = file_id
         user_state[uid]["step"] = "choose_subject"
         markup, _ = subjects_menu(uid)
         bot.send_message(message.chat.id, t(uid, "file_received"), reply_markup=markup)
         return
-
     bot.send_message(message.chat.id, t(uid, "send_file_first"), parse_mode="Markdown")
 
-# ----- معالجة الرسائل -----
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     uid = message.from_user.id
     load_user_lang(uid)
-    # جلب كل شيء مرة واحدة
     welcome_msg, rejection, materials = get_settings()
     allowed_ids, admin_ids, owner_ids, open_all, admin_all, log_ids = get_users()
     is_allowed = open_all or uid in allowed_ids
@@ -1175,7 +1073,6 @@ def handle_message(message):
     text = message.text or ""
     state = user_state.get(uid, {})
 
-    # السماح بتغيير اللغة بدون صلاحية
     if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
         if text == "🇾🇪 العربية": user_lang[uid] = "ar"
         elif text == "🇬🇧 English": user_lang[uid] = "en"
@@ -1190,15 +1087,12 @@ def handle_message(message):
     if not is_allowed:
         contact_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         contact_markup.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
-        if owner_ids:
-            if not is_pending(uid):
-                pending_requests.add(uid)
-            bot.send_message(message.chat.id, rejection)
-            bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
-        else:
-            bot.send_message(message.chat.id, rejection)
-            bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
+        if not is_pending(uid):
+            pending_requests.add(uid)
+        bot.send_message(message.chat.id, rejection)
+        bot.send_message(message.chat.id, "📲 شارك جهة اتصالك لتسهيل التواصل معك:", reply_markup=contact_markup)
         return
+
     if sheet is None:
         bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
         return
@@ -1207,12 +1101,9 @@ def handle_message(message):
     back_btn = t(uid, "back")
 
     try:
-        # جلب البيانات مرة واحدة لكل الرسالة
         subjects_markup, subjects_list = subjects_menu(uid)
         data = get_data()
 
-        # ===== اختيار اللغة =====
-        # ===== عرض تعليمات البوت =====
         if state.get("viewing_help"):
             if text == t(uid, "view_user_help"):
                 send_help_materials(message.chat.id, uid, "user")
@@ -1226,13 +1117,11 @@ def handle_message(message):
                 bot.send_message(message.chat.id, t(uid, "choose_lang"), reply_markup=help_view_menu(uid))
             return
 
-        # ===== إدارة المستخدمين (مالك) =====
         if text == t(uid, "manage_users"):
             if not owner:
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
                 return
             user_state[uid] = {"managing_users": True, "step": "menu"}
-            # عرض القائمة مباشرة
             rows = users_sheet.get_all_values()
             if len(rows) <= 1:
                 bot.send_message(message.chat.id, t(uid, "no_users"))
@@ -1247,22 +1136,21 @@ def handle_message(message):
                 empty_streak = 0
                 name = row[0].strip() if row else ""
                 uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-                allowed = row[3].strip().upper() if len(row) > 3 else "FALSE"
+                allowed_v = row[3].strip().upper() if len(row) > 3 else "FALSE"
                 adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
                 own = row[5].strip().upper() if len(row) > 5 else "FALSE"
                 if not name or name == "الكل" or not uid_str: continue
-                status = "✅" if allowed == "TRUE" else "❌"
-                entries.append((status, name, uid_str, own, adm, allowed))
-            entries.sort(key=lambda x: (0 if x[3]=="TRUE" else 1 if x[4]=="TRUE" else 2))
+                entries.append((name, uid_str, own, adm, allowed_v))
+            entries.sort(key=lambda x: (0 if x[2]=="TRUE" else 1 if x[3]=="TRUE" else 2))
             header = "👥 *قائمة المستخدمين:*\n" + "─" * 25
             bot.send_message(message.chat.id, header, parse_mode="Markdown", reply_markup=back_only_menu(uid))
-            for status, name, uid_str, own, adm, allowed in entries:
+            for name, uid_str, own, adm, allowed_v in entries:
                 phone = ""
                 for row in rows[1:]:
                     if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                         phone = row[1].strip() if len(row) > 1 else ""
                         break
-                role_icon = "👑" if own == "TRUE" else ("⭐" if adm == "TRUE" else ("👤" if allowed == "TRUE" else "❌"))
+                role_icon = "👑" if own == "TRUE" else ("⭐" if adm == "TRUE" else ("👤" if allowed_v == "TRUE" else "❌"))
                 phone_line = f"\n📞 `{phone}`" if phone else ""
                 padding = "\n───────────────────────"
                 msg = f"{role_icon} *{name}*\n🆔 `{uid_str}`{phone_line}{padding}"
@@ -1276,72 +1164,20 @@ def handle_message(message):
             return
 
         if state.get("managing_users"):
-            step = state.get("step")
+            if text == back_btn:
+                user_state.pop(uid, None)
+                bot.send_message(message.chat.id, welcome_msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
-            if text == "📋 قائمة المستخدمين":
-                rows = users_sheet.get_all_values()
-                if len(rows) <= 1:
-                    bot.send_message(message.chat.id, t(uid, "no_users"))
-                    return
-                entries = []
-                empty_streak = 0
-                for row in rows[1:]:
-                    if not row or not any(c.strip() for c in row):
-                        empty_streak += 1
-                        if empty_streak >= 5: break
-                        continue
-                    empty_streak = 0
-                    name = row[0].strip() if row else ""
-                    uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-                    allowed = row[3].strip().upper() if len(row) > 3 else "FALSE"
-                    adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
-                    own = row[5].strip().upper() if len(row) > 5 else "FALSE"
-                    if not name or name == "الكل" or not uid_str: continue
-                    role = "👑 مالك" if own == "TRUE" else ("👑 أدمن" if adm == "TRUE" else "👤 مستخدم")
-                    status = "✅" if allowed == "TRUE" else "❌"
-                    entries.append((status, name, uid_str, role, own, adm, allowed))
-
-                # ترتيب: مالك ← أدمن ← مستخدم
-                entries.sort(key=lambda x: (0 if x[4]=="TRUE" else 1 if x[5]=="TRUE" else 2))
-
-                # إرسال كل مستخدم كرسالة منفصلة مع أزرار الدور
-                header = "👥 *قائمة المستخدمين:*\n" + "─" * 25
-                bot.send_message(message.chat.id, header, parse_mode="Markdown")
-                for status, name, uid_str, role, own, adm, allowed in entries:
-                    # جلب رقم الهاتف
-                    phone = ""
-                    for row in rows[1:]:
-                        if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                            phone = row[1].strip() if len(row) > 1 else ""
-                            break
-                    phone_line = f"\n📞 `{phone}`" if phone else ""
-                    msg = f"{status} *{name}*\n🆔 `{uid_str}`{phone_line}"
-                    markup_inline = telebot.types.InlineKeyboardMarkup(row_width=3)
-                    o_check = " ✓" if own == "TRUE" else "  "
-                    a_check = " ✓" if adm == "TRUE" and own != "TRUE" else "  "
-                    u_check = " ✓" if allowed == "TRUE" and adm != "TRUE" and own != "TRUE" else "  "
-                    markup_inline.row(
-                        telebot.types.InlineKeyboardButton(f"👑 مالك{o_check}", callback_data=f"role_owner_{uid_str}"),
-                        telebot.types.InlineKeyboardButton(f"⚙️ أدمن{a_check}", callback_data=f"role_admin_{uid_str}"),
-                        telebot.types.InlineKeyboardButton(f"👤 مستخدم{u_check}", callback_data=f"role_user_{uid_str}")
-                    )
-                    bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=markup_inline)
-                return
-
-
-
-        # ===== العودة =====
         if text == back_btn:
-            if any(state.get(k) for k in ["uploading", "uploading_help", "viewing_help", "broadcasting",
-                                            "adding_data", "editing_data", "managing_users"]):
+            if any(state.get(k) for k in ["uploading", "uploading_help", "viewing_help", "broadcasting", "adding_data", "editing_data", "managing_users"]):
                 user_state.pop(uid, None)
                 bot.send_message(message.chat.id, welcome_msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             if state.get("awaiting_date"):
                 subj = state["subject"]
                 user_state[uid] = {"subject": subj}
-                bot.send_message(message.chat.id, f"📌 {subj}\n{t(uid, 'choose_option')}",
-                                 reply_markup=subject_options_menu(uid))
+                bot.send_message(message.chat.id, f"📌 {subj}\n{t(uid, 'choose_option')}", reply_markup=subject_options_menu(uid))
                 return
             if state.get("subject"):
                 user_state.pop(uid, None)
@@ -1352,7 +1188,6 @@ def handle_message(message):
             bot.send_message(message.chat.id, welcome_msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # ===== إرسال إشعار =====
         if text == t(uid, "broadcast"):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -1368,26 +1203,19 @@ def handle_message(message):
             if step == "waiting_text":
                 if text == "📤 إرسال بدون نص":
                     user_state[uid]["broadcast_text"] = ""
-                    user_state[uid]["step"] = "waiting_file_or_send"
-                    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-                    markup.add("📤 إرسال الآن", t(uid, "back"))
-                    bot.send_message(message.chat.id, "أرسل ملفاً أو اضغط إرسال الآن:", reply_markup=markup)
                 else:
                     user_state[uid]["broadcast_text"] = text
-                    user_state[uid]["step"] = "waiting_file_or_send"
-                    markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-                    markup.add("📤 إرسال الآن", t(uid, "back"))
-                    bot.send_message(message.chat.id, "أرسل ملفاً (اختياري) أو اضغط إرسال الآن:", reply_markup=markup)
+                user_state[uid]["step"] = "waiting_file_or_send"
+                markup = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+                markup.add("📤 إرسال الآن", t(uid, "back"))
+                bot.send_message(message.chat.id, "أرسل ملفاً (اختياري) أو اضغط إرسال الآن:", reply_markup=markup)
                 return
             if step == "waiting_file_or_send":
                 if text == "📤 إرسال الآن":
-                    _do_broadcast(message.chat.id, uid, admin, owner,
-                                  state.get("broadcast_text", ""),
-                                  state.get("broadcast_file_id"), state.get("broadcast_file_type"))
+                    _do_broadcast(message.chat.id, uid, admin, owner, state.get("broadcast_text", ""), state.get("broadcast_file_id"), state.get("broadcast_file_type"))
                     user_state.pop(uid, None)
                 return
 
-        # ===== رفع التعليمات =====
         if text == t(uid, "upload_help"):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -1403,8 +1231,7 @@ def handle_message(message):
                 elif text == t(uid, "for_admins"): user_state[uid]["audience"] = "admin"
                 else: return
                 user_state[uid]["step"] = "choose_note"
-                bot.send_message(message.chat.id, "أدخل نصاً توضيحياً (اختياري) أو أرسل الملف مباشرة:",
-                                 reply_markup=back_only_menu(uid))
+                bot.send_message(message.chat.id, "أدخل نصاً توضيحياً (اختياري) أو أرسل الملف مباشرة:", reply_markup=back_only_menu(uid))
                 return
             if step == "choose_note":
                 user_state[uid]["note"] = text
@@ -1413,16 +1240,13 @@ def handle_message(message):
                 return
             if step == "waiting_file_help":
                 audience = state.get("audience", "user")
-                note = state.get("note", "")
                 if save_help_material("", "text", audience, text):
-                    bot.send_message(message.chat.id, t(uid, "help_saved"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    bot.send_message(message.chat.id, t(uid, "help_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
                     bot.send_message(message.chat.id, t(uid, "help_error"))
                 user_state.pop(uid, None)
                 return
 
-        # ===== رفع ملف عادي =====
         if text == t(uid, "upload_file"):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -1457,16 +1281,14 @@ def handle_message(message):
                     return
                 date = parse_date(text)
                 if save_file_to_cell(date, state.get("subject"), state.get("col"), state.get("file_id")):
-                    log_info(f"FILE_SAVED | uid={uid} | subject={state.get('subject')} | type={state.get('file_type')} | date={date}")
-                    bot.send_message(message.chat.id,
-                                     f"{t(uid, 'file_saved')}\n\n📌 *{state.get('subject')}*\n{state.get('file_type')}\n📅 {date}",
+                    log_info(f"FILE_SAVED | uid={uid} | subject={state.get('subject')} | date={date}")
+                    bot.send_message(message.chat.id, f"{t(uid, 'file_saved')}\n\n📌 *{state.get('subject')}*\n{state.get('file_type')}\n📅 {date}",
                                      parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
                     bot.send_message(message.chat.id, t(uid, "file_error"))
                 user_state.pop(uid, None)
                 return
 
-        # ===== إضافة بيانات =====
         if text == t(uid, "add_data"):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -1477,14 +1299,12 @@ def handle_message(message):
 
         if state.get("adding_data"):
             step = state.get("step")
-            data_types = {t(uid, k): v for k, v in [("add_lecture","lecture"),("add_task","task"),
-                          ("add_summary","summary"),("add_price","price"),("add_alert","alert")]}
+            data_types = {t(uid, k): v for k, v in [("add_lecture","lecture"),("add_task","task"),("add_summary","summary"),("add_price","price"),("add_alert","alert")]}
 
             if step == "choose_type" and text in data_types:
                 user_state[uid]["data_type"] = data_types[text]
                 dtype = data_types[text]
                 if dtype == "lecture":
-                    # ترتيب جديد للمحاضرة: تاريخ ← مبنى ← قاعة ← مادة ← وقت
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, t(uid, "enter_date"), reply_markup=back_only_menu(uid))
                     send_today_date(message.chat.id, tomorrow=True)
@@ -1509,13 +1329,13 @@ def handle_message(message):
                     bot.send_message(message.chat.id, t(uid, "choose_building"), reply_markup=buildings_menu(uid))
                 elif dtype == "alert":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_alert") + "\n`مثال: الاختبار يوم الخميس`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_alert"), reply_markup=back_only_with_no_exist_menu(uid))
                 elif dtype == "task":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_task") + "\n`مثال: حل تمارين الفصل 3`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_task"), reply_markup=back_only_with_no_exist_menu(uid))
                 elif dtype == "summary":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, "أدخل نص الملخص:\n`مثال: ملخص الفصل الأول`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, "أدخل نص الملخص:", reply_markup=back_only_with_no_exist_menu(uid))
                 return
 
             if step == "choose_building":
@@ -1543,10 +1363,10 @@ def handle_message(message):
                 dtype = state.get("data_type")
                 if dtype == "lecture":
                     user_state[uid]["step"] = "enter_time"
-                    bot.send_message(message.chat.id, "اختر وقت المحاضرة أو أدخل توقيتاً خاصاً:", reply_markup=lecture_time_menu(uid))
+                    bot.send_message(message.chat.id, "اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid))
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
-                    bot.send_message(message.chat.id, t(uid, "enter_price") + "\n`25 ريال`", parse_mode="Markdown", reply_markup=back_only_with_no_exist_menu(uid))
+                    bot.send_message(message.chat.id, t(uid, "enter_price"), reply_markup=back_only_with_no_exist_menu(uid))
                 return
 
             if step == "enter_time":
@@ -1559,7 +1379,6 @@ def handle_message(message):
                     return
                 else:
                     user_state[uid]["time_val"] = t(uid, "no_exist") if text == t(uid, "no_exist") else normalize_time(text)
-                # تحقق من التعارض ثم حفظ
                 subject = state.get("subject")
                 date = state.get("date", "")
                 room = state.get("room", "")
@@ -1570,17 +1389,14 @@ def handle_message(message):
                     user_state[uid]["time_val"] = time_val
                     conflict_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     conflict_markup.add("🔄 استبدال", t(uid, "back"))
-                    bot.send_message(message.chat.id,
-                        f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n🕐 {conflict['time']}\n📍 {conflict['room']}\n\nالوقت الجديد `{time_val}` يتداخل معها.\n\nماذا تريد؟",
-                        parse_mode="Markdown", reply_markup=conflict_markup)
+                    bot.send_message(message.chat.id, f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n🕐 {conflict['time']}\n📍 {conflict['room']}\n\nالوقت الجديد `{time_val}` يتداخل معها.\n\nماذا تريد؟",
+                                     parse_mode="Markdown", reply_markup=conflict_markup)
                 elif save_lecture(date, subject, time_val, room):
-                    log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
                     add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
                     user_state[uid]["step"] = "lecture_done"
                     bot.send_message(message.chat.id, f"✅ تم حفظ المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
                 else:
-                    log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
                     bot.send_message(message.chat.id, t(uid, "data_error"))
                     user_state.pop(uid, None)
                 return
@@ -1597,17 +1413,13 @@ def handle_message(message):
                     user_state[uid]["time_val"] = time_val
                     conflict_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     conflict_markup.add("🔄 استبدال", t(uid, "back"))
-                    bot.send_message(message.chat.id,
-                        f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n🕐 {conflict['time']}\n📍 {conflict['room']}\n\nالوقت الجديد `{time_val}` يتداخل معها.\n\nماذا تريد؟",
-                        parse_mode="Markdown", reply_markup=conflict_markup)
+                    bot.send_message(message.chat.id, f"⚠️ تداخل في الوقت!", reply_markup=conflict_markup)
                 elif save_lecture(date, subject, time_val, room):
-                    log_info(f"LECTURE_SAVED | uid={uid} | subject={subject} | date={date} | time={time_val} | room={room}")
                     add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                     add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
                     user_state[uid]["step"] = "lecture_done"
                     bot.send_message(message.chat.id, f"✅ تم حفظ المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
                 else:
-                    log_error(f"LECTURE_SAVE_FAILED | uid={uid} | subject={subject}")
                     bot.send_message(message.chat.id, t(uid, "data_error"))
                     user_state.pop(uid, None)
                 return
@@ -1619,11 +1431,10 @@ def handle_message(message):
                 time_val = state.get("time_val", "")
                 if text == "🔄 استبدال":
                     if save_lecture(date, subject, time_val, room):
-                        log_info(f"LECTURE_REPLACED | uid={uid} | subject={subject} | date={date} | time={time_val}")
                         add_another_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                         add_another_markup.add("➕ إضافة محاضرة أخرى", t(uid, "back"))
                         user_state[uid]["step"] = "lecture_done"
-                        bot.send_message(message.chat.id, f"✅ تم استبدال المحاضرة!\n\n📌 {subject}\n📅 {date}\n🕐 {time_val}\n📍 {room}", reply_markup=add_another_markup)
+                        bot.send_message(message.chat.id, f"✅ تم استبدال المحاضرة!", reply_markup=add_another_markup)
                     else:
                         bot.send_message(message.chat.id, t(uid, "data_error"))
                         user_state.pop(uid, None)
@@ -1635,15 +1446,10 @@ def handle_message(message):
                     saved_room = state.get("room", "")
                     saved_building = state.get("building", "")
                     saved_building_label = state.get("building_label", "")
-                    user_state[uid] = {
-                        "adding_data": True, "step": "choose_subject",
-                        "data_type": "lecture",
-                        "date": saved_date, "room": saved_room,
-                        "building": saved_building, "building_label": saved_building_label,
-                        "from_add_another": True  # رجوع من المادة يروح للمبنى
-                    }
+                    user_state[uid] = {"adding_data": True, "step": "choose_subject", "data_type": "lecture",
+                                       "date": saved_date, "room": saved_room, "building": saved_building, "building_label": saved_building_label}
                     bot.send_message(message.chat.id, t(uid, "choose_subject"), reply_markup=subjects_markup)
-                    return
+                return
 
             if step == "confirm_overwrite":
                 subject = state.get("subject")
@@ -1653,16 +1459,11 @@ def handle_message(message):
                 new_val = state.get("pending_val", "")
                 col = {"task": 4, "summary": 6, "alert": 7}.get(dtype, 4)
                 if text == "✏️ بجانبه":
-                    combined = existing + " | " + new_val
-                    ok = save_text_to_cell(date, subject, col, combined)
-                    if ok: log_info(f"{dtype.upper()}_APPENDED | uid={uid} | subject={subject} | date={date}")
-                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    ok = save_text_to_cell(date, subject, col, existing + " | " + new_val)
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif text == "🔄 بدله":
                     ok = save_text_to_cell(date, subject, col, new_val)
-                    if ok: log_info(f"{dtype.upper()}_REPLACED | uid={uid} | subject={subject} | date={date}")
-                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
                     bot.send_message(message.chat.id, t(uid, "choose_menu"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 user_state.pop(uid, None)
@@ -1673,8 +1474,6 @@ def handle_message(message):
                 date = state.get("date", "")
                 dtype = state.get("data_type")
                 val = text
-
-                # تحقق من وجود قيمة سابقة لـ task/summary/alert
                 if dtype in ("task", "summary", "alert"):
                     col = {"task": 4, "summary": 6, "alert": 7}[dtype]
                     existing_rows = get_data()
@@ -1687,11 +1486,9 @@ def handle_message(message):
                         overwrite_markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
                         overwrite_markup.add("✏️ بجانبه", "🔄 بدله")
                         overwrite_markup.add(t(uid, "back"))
-                        bot.send_message(message.chat.id,
-                                         f"⚠️ يوجد مدخل سابق:\n`{existing_val}`\n\nماذا تريد؟",
+                        bot.send_message(message.chat.id, f"⚠️ يوجد مدخل سابق:\n`{existing_val}`\n\nماذا تريد؟",
                                          parse_mode="Markdown", reply_markup=overwrite_markup)
                         return
-
                 if dtype == "price":
                     rows = sheet.get_all_values()
                     updated = False
@@ -1702,30 +1499,20 @@ def handle_message(message):
                             break
                     if not updated:
                         sheet.append_row(["", subject, "", "", "", val, "", ""], value_input_option="USER_ENTERED")
-                    log_info(f"PRICE_SAVED | uid={uid} | subject={subject} | val={val}")
                     bot.send_message(message.chat.id, t(uid, "data_saved"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "task":
                     ok = save_text_to_cell(date, subject, 4, val)
-                    if ok: log_info(f"TASK_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
-                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "summary":
                     ok = save_text_to_cell(date, subject, 6, val)
-                    if ok: log_info(f"SUMMARY_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
-                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 elif dtype == "alert":
                     ok = save_text_to_cell(date, subject, 7, val)
-                    if ok: log_info(f"ALERT_SAVED | uid={uid} | subject={subject} | date={date} | val={val}")
-                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    bot.send_message(message.chat.id, t(uid, "data_saved") if ok else t(uid, "data_error"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 user_state.pop(uid, None)
                 return
-
-            # fallback - أعد عرض القائمة الحالية
             return
 
-        # ===== تعديل/حذف بيانات =====
         if text == t(uid, "edit_data"):
             if not (admin or owner):
                 bot.send_message(message.chat.id, t(uid, "admin_only"))
@@ -1736,8 +1523,7 @@ def handle_message(message):
 
         if state.get("editing_data"):
             step = state.get("step")
-            edit_types = {t(uid, k): v for k, v in [("edit_lecture","lecture"),("edit_task","task"),
-                          ("edit_summary","summary"),("edit_price","price"),("edit_alert","alert")]}
+            edit_types = {t(uid, k): v for k, v in [("edit_lecture","lecture"),("edit_task","task"),("edit_summary","summary"),("edit_price","price"),("edit_alert","alert")]}
             col_map_edit = {"lecture": 2, "task": 4, "summary": 6, "price": 5, "alert": 7}
 
             if step == "choose_type" and text in edit_types:
@@ -1762,10 +1548,7 @@ def handle_message(message):
                     user_state[uid]["step"] = "choose_date_edit"
                     col = col_map_edit.get(dtype, 2)
                     rows = [r for r in data if safe_get(r, 1) == text]
-                    dates = list(dict.fromkeys(
-                        parse_date(safe_get(r, 0)) for r in rows
-                        if get_text(safe_get(r, col)) and safe_get(r, 0)
-                    ))
+                    dates = list(dict.fromkeys(parse_date(safe_get(r, 0)) for r in rows if get_text(safe_get(r, col)) and safe_get(r, 0)))
                     if not dates:
                         bot.send_message(message.chat.id, t(uid, "no_data"), reply_markup=edit_data_menu(uid))
                         user_state[uid] = {"editing_data": True, "step": "choose_type"}
@@ -1798,8 +1581,7 @@ def handle_message(message):
                     current = state.get("current_val", "")
                     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
                     markup.add("✅ نعم، احذف", "❌ لا، إلغاء")
-                    bot.send_message(message.chat.id,
-                                     "⚠️ هل أنت متأكد من حذف:\n*" + current + "*؟",
+                    bot.send_message(message.chat.id, "⚠️ هل أنت متأكد من حذف:\n*" + current + "*؟",
                                      parse_mode="Markdown", reply_markup=markup)
                 return
 
@@ -1846,11 +1628,8 @@ def handle_message(message):
                         bot.send_message(message.chat.id, t(uid, "error"))
                 user_state.pop(uid, None)
                 return
-
-            # fallback
             return
 
-        # ===== المواد =====
         if text == t(uid, "subjects"):
             user_state.pop(uid, None)
             markup, _ = subjects_menu(uid)
@@ -1870,29 +1649,23 @@ def handle_message(message):
         if state.get("subject") and not state.get("awaiting_date"):
             subj = state["subject"]
             rows = [r for r in data if safe_get(r, 1) == subj]
-
             if text in subject_opts:
                 if text == t(uid, "subject_options_price"):
                     price = next((get_text(safe_get(r, 5)) for r in rows if safe_get(r, 5)), None)
                     msg = f"💰 *{subj}*: {price}" if price else f"لا يوجد سعر مسجل لـ *{subj}*"
                     bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=subject_options_menu(uid))
                     return
-
                 col_map = {t(uid, "subject_options_schedule"): 2, t(uid, "subject_options_tasks"): 4,
                            t(uid, "subject_options_summary"): 6, t(uid, "subject_options_alerts"): 7}
                 col = col_map[text]
-                dates = list(dict.fromkeys(
-                    parse_date(safe_get(r, 0)) for r in rows
-                    if (get_text(safe_get(r, col)) or get_file_id(safe_get(r, col))) and safe_get(r, 0)
-                ))
+                dates = list(dict.fromkeys(parse_date(safe_get(r, 0)) for r in rows if (get_text(safe_get(r, col)) or get_file_id(safe_get(r, col))) and safe_get(r, 0)))
                 if not dates:
                     no_data_map = {t(uid, "subject_options_schedule"): t(uid, "no_schedule"),
                                    t(uid, "subject_options_tasks"): t(uid, "no_tasks_subj"),
                                    t(uid, "subject_options_summary"): t(uid, "no_summary"),
                                    t(uid, "subject_options_alerts"): t(uid, "no_alerts_subj")}
                     no_msg = no_data_map.get(text, "لا توجد بيانات لـ")
-                    bot.send_message(message.chat.id, f"{no_msg} *{subj}*",
-                                     parse_mode="Markdown", reply_markup=subject_options_menu(uid))
+                    bot.send_message(message.chat.id, f"{no_msg} *{subj}*", parse_mode="Markdown", reply_markup=subject_options_menu(uid))
                     return
                 user_state[uid] = {"subject": subj, "action": text, "awaiting_date": True, "col": col, "dates": dates}
                 bot.send_message(message.chat.id, t(uid, "choose_date"), reply_markup=dates_menu(uid, dates))
@@ -1907,7 +1680,6 @@ def handle_message(message):
             if not matched:
                 bot.send_message(message.chat.id, t(uid, "no_data"), reply_markup=dates_menu(uid, dates))
                 return
-
             label_map = {t(uid, "subject_options_schedule"): t(uid, "label_time"),
                          t(uid, "subject_options_tasks"): t(uid, "label_task"),
                          t(uid, "subject_options_summary"): t(uid, "label_summary"),
@@ -1917,36 +1689,25 @@ def handle_message(message):
             day_str = f" ({day})" if day else ""
             response = f"*{subj}* — {text}{day_str}\n" + "─" * 25 + "\n"
             file_ids = []
-
             for row in matched:
                 cell = safe_get(row, col)
                 val = get_text(cell)
                 fid = get_file_id(cell)
                 if val: response += f"{label}: {val}\n"
                 if fid: file_ids.append(fid)
-
             if response.strip().endswith("─" * 25):
                 response += t(uid, "no_data")
-
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=dates_menu(uid, dates))
             for fid in file_ids:
-                sent = False
                 for sender in [bot.send_document, bot.send_photo, bot.send_video, bot.send_audio, bot.send_voice]:
-                    try:
-                        sender(message.chat.id, fid)
-                        sent = True
-                        break
-                    except:
-                        continue
+                    try: sender(message.chat.id, fid); break
+                    except: continue
             return
 
-        # ===== القائمة الرئيسية =====
         if text == t(uid, "schedule"):
             last_date = get_last_date(data, 2)
             if not last_date:
-                has_any = any(safe_get(r, 1) for r in data)
-                msg = t(uid, "no_exist") + " 🕐" if has_any else t(uid, "unknown") + " 🕐"
-                bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                bot.send_message(message.chat.id, t(uid, "unknown") + " 🕐", reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             rows = [r for r in data if parse_date(safe_get(r, 0)) == last_date and get_text(safe_get(r, 2))]
             day = get_day_name(last_date, uid)
@@ -1958,9 +1719,7 @@ def handle_message(message):
         elif text == t(uid, "tasks"):
             last_date = get_last_date(data, 4)
             if not last_date:
-                has_any = any(safe_get(r, 1) for r in data)
-                msg = t(uid, "no_exist") + " 📝" if has_any else t(uid, "unknown") + " 📝"
-                bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                bot.send_message(message.chat.id, t(uid, "unknown") + " 📝", reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             rows = [r for r in data if parse_date(safe_get(r, 0)) == last_date and (get_text(safe_get(r, 4)) or get_file_id(safe_get(r, 4)))]
             day = get_day_name(last_date, uid)
@@ -1987,9 +1746,7 @@ def handle_message(message):
                 if s and p and s not in seen:
                     seen[s] = p
             if not seen:
-                has_any = any(safe_get(r, 1) for r in data)
-                msg = t(uid, "no_exist") + " 💰" if has_any else t(uid, "unknown") + " 💰"
-                bot.send_message(message.chat.id, msg, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                bot.send_message(message.chat.id, t(uid, "unknown") + " 💰", reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             title = "💰 أسعار الملازم" if user_lang.get(uid, "ar") == "ar" else "💰 Book Prices"
             max_len = max(len(s) for s in seen.keys()) if seen else 10
@@ -2000,8 +1757,7 @@ def handle_message(message):
             bot.send_message(message.chat.id, response, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
 
         elif text == t(uid, "alerts"):
-            alerts = [(safe_get(r,1), parse_date(safe_get(r,0)), get_text(safe_get(r,7)))
-                      for r in data if get_text(safe_get(r,7))]
+            alerts = [(safe_get(r,1), parse_date(safe_get(r,0)), get_text(safe_get(r,7))) for r in data if get_text(safe_get(r,7))]
             if not alerts:
                 bot.send_message(message.chat.id, t(uid, "no_alerts"), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
@@ -2018,20 +1774,6 @@ def handle_message(message):
         bot.send_message(message.chat.id, t(uid, "error"))
         log_error(f"خطأ في handle_message: {e}")
 
-class KeepAlive(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running!")
-    def log_message(self, format, *args):
-        pass
-
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), KeepAlive)
-    server.serve_forever()
-
-if __name__ == "__main__":
-    threading.Thread(target=run_server, daemon=True).start()
-    log_info("البوت يعمل...")
+def run():
+    log_info("Bot1 يعمل...")
     bot.infinity_polling()
