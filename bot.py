@@ -396,16 +396,16 @@ def is_owner_id(uid):
 def is_owner(message):
     return is_owner_id(message.from_user.id)
 
-def add_user_to_sheet(name, uid, auto=False):
+def add_user_to_sheet(name, uid, auto=False, allowed=True):
     try:
         display_name = f"🆕 {name}" if auto else name
-        users_sheet.append_row([display_name, "", uid, True, False, False, False, False], value_input_option="USER_ENTERED")
+        users_sheet.append_row([display_name, "", uid, allowed, False, False, False, False], value_input_option="USER_ENTERED")
         return True
     except:
         return False
 
 def auto_register_user(message, open_all=None):
-    """يسجل المستخدم تلقائياً إذا البوت مفتوح للكل"""
+    """يسجل المستخدم تلقائياً بدون صلاحية — open_all يتجاوز التحقق فقط"""
     try:
         if open_all is None:
             _, _, _, open_all, _, _ = get_users()
@@ -417,7 +417,7 @@ def auto_register_user(message, open_all=None):
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 return  # موجود مسبقاً
         name = message.from_user.full_name or "مجهول"
-        add_user_to_sheet(name, message.from_user.id, auto=True)
+        add_user_to_sheet(name, message.from_user.id, auto=True, allowed=False)
     except:
         pass
 
@@ -1019,6 +1019,14 @@ def start_message(message):
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
 
 # ----- /lang -----
+@bot.message_handler(commands=['server'])
+def server_command(message):
+    inline = telebot.types.InlineKeyboardMarkup()
+    inline.add(telebot.types.InlineKeyboardButton(
+        "🔄 تشغيل البوت", url="https://telegram-bot1-cxnc.onrender.com"
+    ))
+    bot.send_message(message.chat.id, "اضغط الزر لتشغيل البوت:", reply_markup=inline)
+
 @bot.message_handler(commands=['lang'])
 def language_command(message):
     uid = message.from_user.id
