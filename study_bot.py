@@ -599,7 +599,7 @@ def notify_owners_decision(requester_id, requester_name, phone, decided_by, appr
 # ─────────────────────────────────────────────────────
 def main_menu(uid, admin=False, owner=False):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row(bt("زر_المواد"),     bt("زر_التاريخ"))
+    m.row(bt("زر_التاريخ"),    bt("زر_المواد"))
     m.row(bt("زر_التكاليف"),  bt("زر_الجدول"))
     m.row(bt("زر_التنبيهات"), bt("زر_الاسعار"))
     if admin or owner:
