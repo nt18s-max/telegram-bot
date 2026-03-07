@@ -292,4 +292,7 @@ def run():
     app.add_handler(CommandHandler("stats",   stats))
 
     print("✅ بوت التواصل شغال...")
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     app.run_polling()
