@@ -1,4 +1,5 @@
 import threading
+import asyncio
 import os
 import time
 import importlib
@@ -29,7 +30,7 @@ def run_bot1_with_restart():
 
 def run_bot2():
     import contact_bot
-    contact_bot.run()
+    asyncio.run(contact_bot.run())
 
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
