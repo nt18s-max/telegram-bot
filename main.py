@@ -1,5 +1,4 @@
 import threading
-import asyncio
 import os
 import time
 import importlib
@@ -28,11 +27,10 @@ def run_bot1_with_restart():
             print(f"❌ Bot1 توقف: {e} — إعادة التشغيل بعد 5 ثواني...")
             time.sleep(5)
 
-def run_bot2():
-    import contact_bot
-    asyncio.run(contact_bot.run())
-
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
     threading.Thread(target=run_bot1_with_restart, daemon=True).start()
-    run_bot2()
+
+    # contact_bot يشتغل في Main Thread لأنه يحتاج asyncio event loop
+    import contact_bot
+    contact_bot.run()
