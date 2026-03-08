@@ -1,3 +1,4 @@
+
 # ====================================================
 # study_bot.py — النسخة الكاملة المحدّثة
 # ====================================================
@@ -117,8 +118,12 @@ def bt(key):
 user_state       = {}
 user_lang        = {}
 pending_requests = set()
-request_msg_ids  = {}   # {requester_id: {owner_id: msg_id}}
-_users_snapshot  = {}   # للمراقبة
+request_msg_ids   = {}   # {requester_id: {owner_id: msg_id}}
+_file_req_store   = {}   # {short_key: {all data}} للتحايل على حد 64 byte
+_file_req_counter = [0]
+_approval_store   = {}   # {short_key: {requester_id, name, phone}} للتحايل على حد 64 byte
+_approval_counter = [0]
+_users_snapshot   = {}   # للمراقبة
 
 DAYS_AR   = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
 DAYS_EN   = {0:"Monday",1:"Tuesday",2:"Wednesday",3:"Thursday",4:"Friday",5:"Saturday",6:"Sunday"}
@@ -430,8 +435,8 @@ def is_valid_date(d):
 
 def smart_date_from_day(day):
     now = datetime.now(YEMEN_TZ)
-    if day < now.day:
-        # اليوم مرّ → هذا الشهر
+    if day <= now.day:
+        # اليوم مرّ أو هو اليوم → هذا الشهر
         try: return now.replace(day=day).strftime("%d/%m/%Y")
         except: return now.strftime("%d/%m/%Y")
     else:
@@ -676,9 +681,11 @@ def _try_send_file(chat_id, fid, caption=None, parse_mode=None, reply_markup=Non
     return False
 
 def _is_media_fid(fid):
-    from telebot.types import InputMediaPhoto
-    try: InputMediaPhoto(fid); return True
-    except: return False
+    # file_ids للصور والفيديو عادةً تبدأ بـ AgAC أو BAAC
+    # المستندات تبدأ بـ BQA — نستخدم طول وبادئة كتقريب
+    # الطريقة الصحيحة: نحاول إرسال كصورة فعلياً عند الحاجة
+    # هنا نعيد False دائماً لنرسل كل ملف منفرداً عبر _try_send_file
+    return False
 
 def send_files_with_text(chat_id, text, fids, reply_markup=None):
     from telebot.types import InputMediaPhoto, InputMediaDocument
@@ -727,12 +734,20 @@ def send_files_with_text(chat_id, text, fids, reply_markup=None):
 # ─────────────────────────────────────────────────────
 def notify_owners_new_request(requester_id, requester_name, phone=""):
     owners = get_owner_ids()
+    # نخزن البيانات في dict ونستخدم مفتاح قصير لأن callback_data محدود بـ 64 byte
+    _approval_counter[0] += 1
+    short_key = str(_approval_counter[0])
+    _approval_store[short_key] = {
+        "requester_id":   requester_id,
+        "requester_name": requester_name,
+        "phone":          phone,
+    }
     markup = telebot.types.InlineKeyboardMarkup()
     markup.row(
         telebot.types.InlineKeyboardButton(
-            "✅ قبول", callback_data=f"approve_{requester_id}_{requester_name}"),
+            "✅ قبول", callback_data=f"approve_{short_key}"),
         telebot.types.InlineKeyboardButton(
-            "❌ رفض",  callback_data=f"reject_{requester_id}")
+            "❌ رفض",  callback_data=f"reject_{short_key}")
     )
     ph  = f"📞 الرقم: `{phone}`\n" if phone else ""
     msg = (f"📩 طلب انضمام جديد!\n\n"
@@ -1206,18 +1221,21 @@ def handle_approval(call):
         bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
     decided_by = (f"@{call.from_user.username}" if call.from_user.username
                   else call.from_user.full_name)
+
+    short_key = call.data.split("_", 1)[1]
+    req_data  = _approval_store.get(short_key)
+    if not req_data:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب"); return
+
+    requester_id   = req_data["requester_id"]
+    requester_name = req_data["requester_name"]
+    phone          = req_data["phone"]
+
     if call.data.startswith("approve_"):
-        parts          = call.data.split("_", 2)
-        requester_id   = int(parts[1])
-        requester_name = parts[2] if len(parts) > 2 else "مستخدم"
-        phone = ""
         try:
             uid_str = str(requester_id)
             rows    = users_sheet.get_all_values()
-            for row in rows[1:]:
-                if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                    phone = row[1].strip() if len(row) > 1 else ""; break
-            found = False; es = 0
+            found   = False; es = 0
             for i, row in enumerate(rows[1:], start=2):
                 if not row or not any(c.strip() for c in row):
                     es += 1
@@ -1230,6 +1248,7 @@ def handle_approval(call):
             if not found:
                 add_user_to_sheet(requester_name, requester_id)
             pending_requests.discard(requester_id)
+            _approval_store.pop(short_key, None)
             try: bot.send_message(requester_id, bt("رسالة_موافقة"))
             except: pass
             notify_owners_decision(requester_id, requester_name, phone,
@@ -1238,15 +1257,8 @@ def handle_approval(call):
             log_error(f"approve: {e}")
             bot.answer_callback_query(call.id, "❌ خطأ في الحفظ"); return
     else:
-        requester_id = int(call.data.split("_")[1])
-        phone = ""; requester_name = ""
-        try:
-            for row in users_sheet.get_all_values()[1:]:
-                if len(row) > 2 and row[2].strip().lstrip("'") == str(requester_id):
-                    phone          = row[1].strip() if len(row) > 1 else ""
-                    requester_name = row[0].strip(); break
-        except: pass
         pending_requests.discard(requester_id)
+        _approval_store.pop(short_key, None)
         try: bot.send_message(requester_id, bt("رسالة_رفض_طلب"))
         except: pass
         notify_owners_decision(requester_id, requester_name, phone,
@@ -1347,14 +1359,22 @@ def handle_file_request_decision(call):
     caller_id = call.from_user.id
     if not _is_admin_or_owner(caller_id):
         bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
-    parts     = call.data.split(":")
-    action    = parts[1]; req_uid  = int(parts[2])
-    date_val  = parts[3]; subject  = parts[4]
-    col       = int(parts[5]); file_id = parts[6]
+    parts      = call.data.split(":")
+    action     = parts[1]
+    short_key  = parts[2]
+    req_data   = _file_req_store.get(short_key)
+    if not req_data:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب"); return
+    req_uid   = req_data["req_uid"]
+    date_val  = req_data["date"]
+    subject   = req_data["subj"]
+    col       = req_data["col"]
+    file_id   = req_data["fid"]
     decided_by = (f"@{call.from_user.username}" if call.from_user.username
                   else call.from_user.full_name)
     if action == "approve":
         save_file_to_cell(date_val, subject, col, [file_id])
+        _file_req_store.pop(short_key, None)
         try:
             bot.send_message(
                 req_uid,
@@ -1368,6 +1388,7 @@ def handle_file_request_decision(call):
                              f"✅ موافقة بواسطة {decided_by} | {subject} {date_val}")
         except: pass
     else:
+        _file_req_store.pop(short_key, None)
         try:
             bot.send_message(
                 req_uid,
@@ -1824,7 +1845,12 @@ def handle_message(message):
             bot.send_message(message.chat.id, "📌 اختر المادة:",
                              reply_markup=subjects_kb); return
 
-        if text in subjects_list:
+        _in_flow = any(state.get(k) for k in [
+            "adding_data", "uploading", "requesting_upload",
+            "editing_data", "date_search", "broadcasting",
+            "uploading_help", "managing_users", "viewing_help",
+            "awaiting_date"])
+        if not _in_flow and text in subjects_list:
             user_state[uid] = {"subject": text}
             bot.send_message(message.chat.id,
                              f"📌 *{text}*\nماذا تحتاج؟",
@@ -1845,7 +1871,7 @@ def handle_message(message):
                                  reply_markup=subject_options_menu()); return
             col_map3 = {bt("خيار_الجدول"): 2, bt("خيار_التكاليف"): 4,
                         bt("خيار_الملخص"): 6, bt("خيار_التنبيهات"): 7}
-            col   = col_map3[text]
+            col   = col_map3.get(text, 2)
             dates = list(dict.fromkeys(
                 parse_date(safe_get(r, 0)) for r in rows_s
                 if (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col)))
@@ -2029,14 +2055,21 @@ def handle_message(message):
                     col_label = "تكليف" if col == 4 else "ملخص"
                     for fdata in files:
                         fid = fdata["file_id"]
+                        # نستخدم مفتاح قصير لأن callback_data محدود بـ 64 byte
+                        _file_req_counter[0] += 1
+                        short_key = str(_file_req_counter[0])
+                        _file_req_store[short_key] = {
+                            "req_uid": req_uid, "date": date,
+                            "subj": subj, "col": col, "fid": fid
+                        }
                         mk_req = telebot.types.InlineKeyboardMarkup()
                         mk_req.row(
                             telebot.types.InlineKeyboardButton(
                                 "✅ قبول",
-                                callback_data=f"file_req:approve:{req_uid}:{date}:{subj}:{col}:{fid}"),
+                                callback_data=f"file_req:approve:{short_key}"),
                             telebot.types.InlineKeyboardButton(
                                 "❌ رفض",
-                                callback_data=f"file_req:reject:{req_uid}:{date}:{subj}:{col}:{fid}")
+                                callback_data=f"file_req:reject:{short_key}")
                         )
                         caption = (f"📨 طلب رفع {col_label}\n"
                                    f"👤 من: {message.from_user.full_name}\n"
@@ -2279,9 +2312,15 @@ def handle_message(message):
                 user_state[uid]["subject"] = text
                 dtype = state.get("data_type", "")
                 if dtype == "lecture":
-                    user_state[uid]["step"] = "choose_building"
-                    bot.send_message(message.chat.id, "🏛 اختر المبنى:",
-                                     reply_markup=buildings_menu())
+                    # إذا الغرفة والتاريخ محددَين (قادم من choose_room) → إدخال الوقت مباشرة
+                    if state.get("room") and state.get("date"):
+                        user_state[uid]["step"] = "enter_time"
+                        bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:",
+                                         reply_markup=lecture_time_menu())
+                    else:
+                        user_state[uid]["step"] = "choose_building"
+                        bot.send_message(message.chat.id, "🏛 اختر المبنى:",
+                                         reply_markup=buildings_menu())
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
                     bot.send_message(message.chat.id, "💰 أدخل سعر الملزمة:",
@@ -2328,13 +2367,25 @@ def handle_message(message):
                     user_state[uid]["building_label"] = text
                     mk_rooms, rooms = rooms_menu_kb(bmap[text])
                     if not rooms:
-                        bot.send_message(message.chat.id, "⚠️ لا توجد قاعات."); return
-                    user_state[uid]["step"] = "choose_room"
+                        # لا توجد قاعات → نرجع لاختيار المبنى بدل أن يبقى محشوراً
+                        bot.send_message(message.chat.id,
+                            "⚠️ لا توجد قاعات لهذا المبنى. اختر مبنى آخر أو أضف القاعات في شيت القاعات:",
+                            reply_markup=buildings_menu())
+                        return
+                    user_state[uid]["step"]  = "choose_room"
+                    user_state[uid]["rooms"] = rooms  # حفظ القاعات للتحقق لاحقاً
                     bot.send_message(message.chat.id, "🚪 اختر القاعة:",
                                      reply_markup=mk_rooms)
                 return
 
             if step == "choose_room":
+                rooms = state.get("rooms", [])
+                # تحقق من أن النص هو قاعة صالحة
+                if rooms and text not in rooms:
+                    mk_rooms, _ = rooms_menu_kb(state.get("building", ""))
+                    bot.send_message(message.chat.id, "⚠️ اختر قاعة من القائمة:",
+                                     reply_markup=mk_rooms)
+                    return
                 user_state[uid]["room"] = f"{state.get('building_label', '')}: {text}"
                 dtype = state.get("data_type", "")
                 if dtype == "lecture":
@@ -2620,3 +2671,6 @@ def run():
     threading.Thread(target=_watch_sheet_loop, daemon=True).start()
     log_info("بوت الدراسة يعمل ✅")
     bot.infinity_polling()
+
+if __name__ == "__main__":
+    run()
