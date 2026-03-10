@@ -1,4 +1,3 @@
-
 # ====================================================
 # study_bot.py — النسخة الكاملة المحدّثة
 # ====================================================
@@ -384,19 +383,35 @@ def _watch_sheet_loop():
                 if new["owner"] and not old["owner"]:
                     try: bot.send_message(uid, "👑 تمت ترقيتك إلى مالك!")
                     except: pass
-                    notify_owners_decision(uid, name, phone, "الشيت", True)
+                    notify_owners_action(uid, name, phone, "الشيت", "set_owner")
                 elif new["admin"] and not old["admin"]:
                     try: bot.send_message(uid, "⭐ تمت ترقيتك إلى أدمن!")
                     except: pass
-                    notify_owners_decision(uid, name, phone, "الشيت", True)
+                    notify_owners_action(uid, name, phone, "الشيت", "set_admin")
                 elif new["allowed"] and not old["allowed"]:
                     try: bot.send_message(uid, bt("رسالة_موافقة"))
                     except: pass
-                    notify_owners_decision(uid, name, phone, "الشيت", True)
+                    notify_owners_action(uid, name, phone, "الشيت", "approve")
                     log_info(f"موافقة من الشيت على {name}", uid)
+                elif old["owner"] and not new["owner"] and new["admin"]:
+                    # مالك → أدمن
+                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى أدمن.")
+                    except: pass
+                    notify_owners_action(uid, name, phone, "الشيت", "downgrade_owner")
+                elif old["owner"] and not new["owner"] and new["allowed"] and not new["admin"]:
+                    # مالك → مستخدم مباشرة
+                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(uid, name, phone, "الشيت", "downgrade_owner_to_user")
+                elif old["admin"] and not new["admin"] and new["allowed"] and not old["owner"]:
+                    # تخفيض من أدمن → مستخدم عادي
+                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(uid, name, phone, "الشيت", "downgrade_admin")
                 elif not new["allowed"] and old["allowed"]:
                     try: bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.")
                     except: pass
+                    notify_owners_action(uid, name, phone, "الشيت", "remove")
             _users_snapshot = new_snap
         except: pass
 
@@ -761,22 +776,66 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
             request_msg_ids[requester_id][oid] = sent.message_id
         except: pass
 
-def notify_owners_decision(requester_id, requester_name, phone, decided_by, approved):
-    owners  = get_owner_ids()
-    msg_ids = request_msg_ids.pop(requester_id, {})
+def notify_owners_action(target_id, target_name, phone, actor, action):
+    """
+    إشعار لكل المالكين عند أي تغيير في صلاحيات مستخدم.
+
+    action  : approve | reject | remove | set_user | set_admin | set_owner
+              | downgrade_owner | downgrade_admin
+    actor   : اسم/معرف المالك الفاعل  أو  "الشيت"  أو  "الكود السري"
+    """
+
+    # ── عنوان الحدث ─────────────────────────────────────────────────────────
+    EVENT = {
+        "approve":                ("✅", "تمت الموافقة على طلب الانضمام"),
+        "reject":                 ("❌", "تم رفض طلب الانضمام"),
+        "remove":                 ("🚫", "تم إلغاء صلاحية المستخدم"),
+        "set_user":               ("🔄", "تم تعيين دور مستخدم عادي"),
+        "set_admin":              ("⭐", "تم الترقية إلى أدمن"),
+        "set_owner":              ("👑", "تم الترقية إلى مالك"),
+        "downgrade_owner":        ("⬇️", "تم تخفيض رتبة المالك → مستخدم"),
+        "downgrade_owner_to_user":("⬇️", "تم تخفيض رتبة المالك → مستخدم"),
+        "downgrade_admin":        ("⬇️", "تم تخفيض رتبة الأدمن → مستخدم"),
+    }
+    icon, title = EVENT.get(action, ("🔔", action))
+
+    # ── وصف الفاعل ───────────────────────────────────────────────────────────
+    if actor == "الشيت":
+        actor_line = "📊 تعديل مباشر في الشيت"
+    elif actor == "الكود السري":
+        actor_line = "🔑 استخدام الكود السري"
+    else:
+        actor_line = f"👤 {actor}"   # اسم أو معرف المالك
+
+    # ── بيانات المستخدم ──────────────────────────────────────────────────────
+    ph  = f"\n📞 `{phone}`" if phone else ""
+
+    msg = (
+        f"{icon} *{title}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 {target_name}\n"
+        f"🆔 `{target_id}`{ph}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔧 {actor_line}"
+    )
+
+    owners = get_owner_ids()
+    # احذف رسالة طلب الانضمام الواردة (للموافقة/الرفض فقط)
+    if action in ("approve", "reject"):
+        msg_ids = request_msg_ids.pop(target_id, {})
+        for oid in owners:
+            mid = msg_ids.get(oid)
+            if mid:
+                try: bot.delete_message(oid, mid)
+                except: pass
     for oid in owners:
-        mid = msg_ids.get(oid)
-        if mid:
-            try: bot.delete_message(oid, mid)
-            except: pass
-    status = "✅ تمت الموافقة على" if approved else "❌ تم الرفض على"
-    ph     = f"📞 الرقم: `{phone}`\n" if phone else ""
-    result = (f"{status}:\n👤 `{requester_name}`\n"
-              f"🆔 `{requester_id}`\n{ph}"
-              f"من قِبل: {decided_by}")
-    for oid in owners:
-        try: bot.send_message(oid, result, parse_mode="Markdown")
+        try: bot.send_message(oid, msg, parse_mode="Markdown")
         except: pass
+
+# دالة قديمة للتوافق الخلفي (تحوّل للدالة الجديدة)
+def notify_owners_decision(requester_id, requester_name, phone, decided_by, approved):
+    action = "approve" if approved else "reject"
+    notify_owners_action(requester_id, requester_name, phone, decided_by, action)
 
 # ─────────────────────────────────────────────────────
 # اقتراح التاريخ
@@ -832,6 +891,13 @@ def subjects_menu_kb():
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for s in subjects: m.add(s)
     m.add(bt("زر_عوده")); return m, subjects
+
+def subjects_with_noexist_kb():
+    """قائمة المواد + زر 'لا يوجد' للإضافة (قبل اختيار المادة)"""
+    subjects = get_subjects()
+    m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    for s in subjects: m.add(s)
+    m.add("🚫 لا يوجد", bt("زر_عوده")); return m, subjects
 
 def subject_options_menu():
     m = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
@@ -1149,40 +1215,66 @@ def handle_role(call):
             t_phone   = row[1].strip() if len(row) > 1 else ""
             # تحديد الدور
             if new_role == "owner" and cur_own == "TRUE":
+                # إلغاء رتبة المالك → أدمن
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "تم إلغاء صلاحية المالك"
+                try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                except: pass
+                notify_owners_action(int(target_uid), t_name, t_phone,
+                                     decided_by, "downgrade_owner")
             elif new_role == "admin" and cur_adm == "TRUE" and cur_own != "TRUE":
+                # إلغاء رتبة الأدمن → مستخدم عادي
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "تم إلغاء صلاحية الأدمن"
+                try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                except: pass
+                notify_owners_action(int(target_uid), t_name, t_phone,
+                                     decided_by, "downgrade_admin")
             elif (new_role == "user" and cur_allow == "TRUE"
                   and cur_adm != "TRUE" and cur_own != "TRUE"):
+                # إلغاء صلاحية المستخدم العادي
                 users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                 label = "⛔ تم إلغاء الصلاحية"
                 try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
                 except: pass
-                notify_owners_decision(int(target_uid), t_name, t_phone,
-                                       decided_by, False)
+                notify_owners_action(int(target_uid), t_name, t_phone,
+                                    decided_by, "remove")
             elif new_role == "owner":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
                 label = "👑 تم تعيين مالك"
-                try: bot.send_message(int(target_uid), "👑 تمت ترقيتك إلى مالك!")
+                try: bot.send_message(int(target_uid), "👑 تهانينا! تمت ترقيتك إلى مالك.")
                 except: pass
-                notify_owners_decision(int(target_uid), t_name, t_phone,
-                                       decided_by, True)
+                notify_owners_action(int(target_uid), t_name, t_phone,
+                                    decided_by, "set_owner")
             elif new_role == "admin":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
                 label = "⭐ تم تعيين أدمن"
-                try: bot.send_message(int(target_uid), "⭐ تمت ترقيتك إلى أدمن!")
+                try: bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
                 except: pass
-                notify_owners_decision(int(target_uid), t_name, t_phone,
-                                       decided_by, True)
+                notify_owners_action(int(target_uid), t_name, t_phone,
+                                    decided_by, "set_admin")
             else:
+                # تعيين مستخدم عادي
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "👤 تم تعيين مستخدم"
-                try: bot.send_message(int(target_uid), bt("رسالة_موافقة"))
-                except: pass
-                notify_owners_decision(int(target_uid), t_name, t_phone,
-                                       decided_by, True)
+                if cur_own == "TRUE":
+                    # مالك → مستخدم (تخطّى مرحلة الأدمن)
+                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone,
+                                        decided_by, "downgrade_owner_to_user")
+                elif cur_adm == "TRUE":
+                    # أدمن → مستخدم
+                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone,
+                                        decided_by, "downgrade_admin")
+                else:
+                    # مستخدم جديد / تفعيل
+                    try: bot.send_message(int(target_uid), bt("رسالة_موافقة"))
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone,
+                                        decided_by, "set_user")
             # تحديث البطاقة
             try:
                 rows2 = users_sheet.get_all_values()
@@ -1251,8 +1343,8 @@ def handle_approval(call):
             _approval_store.pop(short_key, None)
             try: bot.send_message(requester_id, bt("رسالة_موافقة"))
             except: pass
-            notify_owners_decision(requester_id, requester_name, phone,
-                                   decided_by, True)
+            notify_owners_action(requester_id, requester_name, phone,
+                                  decided_by, "approve")
         except Exception as e:
             log_error(f"approve: {e}")
             bot.answer_callback_query(call.id, "❌ خطأ في الحفظ"); return
@@ -1261,8 +1353,8 @@ def handle_approval(call):
         _approval_store.pop(short_key, None)
         try: bot.send_message(requester_id, bt("رسالة_رفض_طلب"))
         except: pass
-        notify_owners_decision(requester_id, requester_name, phone,
-                               decided_by, False)
+        notify_owners_action(requester_id, requester_name, phone,
+                              decided_by, "reject")
     bot.answer_callback_query(call.id)
 
 
@@ -1681,7 +1773,9 @@ def handle_message(message):
     if not is_allowed:
         # كود سري
         code = calc_secret_code(uid)
-        if text == code:
+        # قبول الأرقام العربية (٠-٩) وتحويلها، ورفض أي نص يحتوي على حروف
+        _code_input = normalize_digits(text).strip()
+        if _code_input == code and _code_input.isdigit():
             try:
                 uid_str = str(uid); rows = users_sheet.get_all_values()
                 found = False; es = 0
@@ -1697,8 +1791,15 @@ def handle_message(message):
                 if not found:
                     add_user_to_sheet(message.from_user.full_name or "مجهول", uid)
                 pending_requests.discard(uid)
+                # تحديث الـ snapshot مباشرة لمنع الـ poller من إرسال رسالة مكررة
+                uid_str_snap = str(uid)
+                if uid_str_snap in _users_snapshot:
+                    _users_snapshot[uid_str_snap]["allowed"] = True
                 bot.send_message(message.chat.id, bt("رسالة_موافقة"),
                                  reply_markup=telebot.types.ReplyKeyboardRemove())
+                notify_owners_action(uid,
+                                     message.from_user.full_name or "مجهول",
+                                     "", "الكود السري", "approve")
                 log_info(f"كود سري صحيح", uid)
             except Exception as e:
                 log_error(f"secret_code activate: {e}")
@@ -1845,12 +1946,14 @@ def handle_message(message):
             bot.send_message(message.chat.id, "📌 اختر المادة:",
                              reply_markup=subjects_kb); return
 
-        _in_flow = any(state.get(k) for k in [
-            "adding_data", "uploading", "requesting_upload",
-            "editing_data", "date_search", "broadcasting",
-            "uploading_help", "managing_users", "viewing_help",
-            "awaiting_date"])
-        if not _in_flow and text in subjects_list:
+        # ══════════════════════════════════════════
+        # 📚 قائمة المواد
+        # يعمل فقط لما state فاضي أو فيه subject بس
+        # أي flow نشط يحط keys إضافية في state → لا يشتغل
+        # ══════════════════════════════════════════
+        _free = not state or set(state.keys()) <= {"subject"}
+
+        if _free and text in subjects_list:
             user_state[uid] = {"subject": text}
             bot.send_message(message.chat.id,
                              f"📌 *{text}*\nماذا تحتاج؟",
@@ -1859,7 +1962,7 @@ def handle_message(message):
 
         SUBJ_OPTS = [bt(k) for k in ["خيار_الجدول", "خيار_التكاليف",
                                       "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات"]]
-        if state.get("subject") and text in SUBJ_OPTS:
+        if _free and state.get("subject") and text in SUBJ_OPTS:
             subj   = state["subject"]
             rows_s = [r for r in data if safe_get(r, 1) == subj]
             if text == bt("خيار_السعر"):
@@ -2304,9 +2407,24 @@ def handle_message(message):
                     send_date_suggestions(message.chat.id, for_lecture=True)
                 elif dtype in ("task", "summary", "alert", "price"):
                     user_state[uid]["step"] = "choose_subject"
+                    _kb_no, _ = subjects_with_noexist_kb()
                     bot.send_message(message.chat.id, "📌 اختر المادة:",
-                                     reply_markup=subjects_kb)
+                                     reply_markup=_kb_no)
                 return
+
+            if step == "choose_subject" and text == "🚫 لا يوجد":
+                # المستخدم يؤكد أنه لا يوجد بيانات لهذا النوع
+                dtype = state.get("data_type", "")
+                label_map = {
+                    "task":    "لا يوجد تكليف",
+                    "summary": "لا يوجد ملخص",
+                    "alert":   "لا يوجد تنبيه",
+                    "price":   "لا يوجد سعر",
+                }
+                msg_no = label_map.get(dtype, "لا يوجد")
+                bot.send_message(message.chat.id, f"✅ تم التسجيل: {msg_no}",
+                                 reply_markup=main_menu(uid, admin=admin, owner=owner))
+                user_state.pop(uid, None); return
 
             if step == "choose_subject" and text in subjects_list:
                 user_state[uid]["subject"] = text
@@ -2324,7 +2442,7 @@ def handle_message(message):
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
                     bot.send_message(message.chat.id, "💰 أدخل سعر الملزمة:",
-                                     reply_markup=back_with_noexist())
+                                     reply_markup=back_only_menu())
                 else:
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, "📅 أدخل التاريخ:",
@@ -2353,11 +2471,11 @@ def handle_message(message):
                     user_state[uid]["step"] = "enter_value"
                     col_lbl = "التكليف" if dtype == "task" else "الملخص"
                     bot.send_message(message.chat.id,
-                        f"📝 أدخل نص {col_lbl}:", reply_markup=back_with_noexist())
+                        f"📝 أدخل نص {col_lbl}:", reply_markup=back_only_menu())
                 elif dtype == "alert":
                     user_state[uid]["step"] = "enter_value"
                     bot.send_message(message.chat.id, "⚠️ أدخل نص التنبيه:",
-                                     reply_markup=back_with_noexist())
+                                     reply_markup=back_only_menu())
                 return
 
             if step == "choose_building":
@@ -2396,8 +2514,9 @@ def handle_message(message):
                                          reply_markup=lecture_time_menu())
                     else:
                         user_state[uid]["step"] = "choose_subject"
+                        _kb_no2, _ = subjects_with_noexist_kb()
                         bot.send_message(message.chat.id, "📌 اختر المادة:",
-                                         reply_markup=subjects_kb)
+                                         reply_markup=_kb_no2)
                 return
 
             if step == "enter_time":
