@@ -1,13 +1,14 @@
 # ====================================================
 # study_bot.py — النسخة النهائية الكاملة
 # جميع الميزات:
-# - AI بنماذج محدثة مع fallback
+# - AI بنماذج محدثة مع fallback (Gemini أولاً ثم OpenRouter)
 # - دعم التسجيلات الصوتية
 # - أوامر إدارية باللغة الطبيعية
 # - إدارة المستخدمين (بحث بالID/رقم/اسم، عرض الكل، آخر 3)
 # - بطاقة مستخدم مع أزرار (مالك/أدمن/مستخدم، AI، تغيير الاسم)
 # - زر سويتش للنشر التلقائي (AUTO PUBLISH) مع عمود في الشيت
 # - إشعارات تلقائية عند إضافة محتوى جديد
+# - طلب انضمام بـ 6 أزرار (رتب + تغيير اسم + تفعيل AI + رفض)
 # - دعم اللغتين (عربي/إنجليزي) عبر bot_texts
 # - مراقبة تغييرات الشيت
 # ====================================================
@@ -28,7 +29,8 @@ LOG_BOT_TOKEN = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
 STUDY_BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "")
 SHEET_KEY = os.environ.get("SHEET_KEY", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "")  # اسم البوت بدون @
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -163,6 +165,8 @@ DEFAULT_BOT_TEXTS = {
     "زر_مساعد_نايف_en": "Naif Assistant",
     "زر_نشر_تلقائي_ar": "النشر التلقائي",
     "زر_نشر_تلقائي_en": "Auto Publish",
+    "رسالة_نايف_يكتب_ar": "✍️ نايف يكتب",
+    "رسالة_نايف_يكتب_en": "✍️ Naif is typing",
     "رسالة_ai_غير_مفعل_ar": "❌ المساعد الذكي غير مفعّل.",
     "رسالة_ai_غير_مفعل_en": "❌ AI assistant is not enabled.",
     "رسالة_ai_غير_مسموح_ar": "⛔ لا تملك صلاحية استخدام المساعد الذكي.",
@@ -231,10 +235,10 @@ _approval_store = {}
 _approval_counter = [0]
 _users_snapshot = {}
 user_ai_enabled = {}
-user_auto_publish = {}  # {uid: True/False} سيتم تحميلها من الشيت
+user_auto_publish = {}
 
 # ─────────────────────────────────────────────────────
-# 🤖 AI — OpenRouter (نماذج محدثة)
+# 🤖 AI — Gemini أولاً ثم OpenRouter
 # ─────────────────────────────────────────────────────
 AI_MODELS = [
     {"id": "openrouter/free", "name": "Auto (أفضل نموذج مجاني)", "icon": "🎯"},
@@ -268,57 +272,37 @@ def _ai_next_model():
 def ai_reset_model():
     _ai_current_model[0] = 0
 
-def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
-    if not OPENROUTER_API_KEY:
-        log_error(f"OPENROUTER_API_KEY غير موجود", uid)
+def ask_gemini(uid, user_text, user_role, system_prompt):
+    """استدعاء Gemini API (مجاني)"""
+    if not GEMINI_API_KEY:
+        return None, None
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{
+                "parts": [{"text": system_prompt + "\n\n" + user_text}]
+            }],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 1024,
+            }
+        }
+        resp = _requests.post(url, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return text, {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash", "icon": "✨"}
+        else:
+            log_error(f"Gemini error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"Gemini exception: {e}", uid)
         return None, None
 
-    if uid not in _ai_histories:
-        _ai_histories[uid] = []
-
-    _ai_histories[uid].append({"role": "user", "content": user_text})
-    if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
-        _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
-
-    data_summary = get_data_summary_for_ai(uid, user_role)
-    bot_summary = get_bot_code_summary(uid)
-
-    if user_role == "owner":
-        role_desc = "أنت مالك البوت. لديك صلاحيات كاملة: إدارة المستخدمين، تغيير الرتب، تفعيل/تعطيل صلاحية AI، بالإضافة إلى كل صلاحيات الأدمن."
-    elif user_role == "admin":
-        role_desc = "أنت أدمن في البوت. لديك صلاحيات الإضافة والتعديل والحذف على جميع البيانات، ويمكنك إرسال إشعارات ورفع ملفات مباشرة. لا يمكنك رؤية بيانات المستخدمين الآخرين عبر هذه المحادثة."
-    else:
-        role_desc = "أنت مستخدم عادي. يمكنك فقط عرض البيانات (محاضرات، تكاليف، ملخصات، تنبيهات، أسعار). لا يمكنك رفع ملفات مباشرة، ولكن يمكنك طلب رفع ملف عبر الزر المخصص."
-
-    admin_note = ""
-    if user_role in ("admin", "owner"):
-        admin_note = (
-            "\n\n**ملاحظة للمستخدم (أدمن/مالك):**\n"
-            "يمكنك إصدار أوامر لإضافة وتعديل وحذف البيانات مباشرة باستخدام اللغة الطبيعية. مثال:\n"
-            "- أضف محاضرة رياضيات يوم 27/03/2026 الساعة 10:00-12:00 قاعة 101\n"
-            "- أضف تكليف برمجة تاريخ 28/03/2026: حل المسائل 1-5\n"
-            "- احذف محاضرة فيزياء يوم 26/03/2026\n"
-            "- أضف سعر رياضيات 5000\n"
-            "- أرسل إشعار للجميع: مرحباً\n"
-            "- بلغ المستخدم 123456789 يقول له: أهلاً\n"
-            "- فعّل AI للمستخدم 123456789\n"
-            "- اجعل 123456789 مالك\n"
-            "- أعد تعيين AI - إعادة تعيين نموذج الذكاء الاصطناعي (للمالك فقط)\n"
-        )
-
-    system_prompt = (
-        AI_SYSTEM_PROMPT_BASE + "\n\n" +
-        role_desc + "\n\n" +
-        f"### قاعدة البيانات ###\n{data_summary}\n\n" +
-        f"### شرح البوت ###\n{bot_summary}\n\n" +
-        admin_note +
-        "**تعليمات مهمة:**\n"
-        "1. إذا طلب المستخدم عدداً معيناً من العناصر، أعطه بالضبط العدد الذي طلبه.\n"
-        "2. إذا طلب بدون تحديد عدد، أعطه آخر عنصر (أو آخر 2-3 إذا كان ذلك مناسباً).\n"
-        "3. استخدم البيانات المتاحة فقط للإجابة.\n"
-        "4. لا تقدم معلومات عن المستخدمين الآخرين للمستخدم العادي أو الأدمن.\n"
-        "5. كن دقيقاً ومباشراً."
-    )
+def ask_openrouter(uid, user_text, user_role, system_prompt, notify_fn=None, send_notify=True):
+    """استدعاء OpenRouter API"""
+    if not OPENROUTER_API_KEY:
+        return None, None
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -389,10 +373,6 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
                 next_m = _ai_next_model()
                 continue
 
-            _ai_histories[uid].append({"role": "assistant", "content": content})
-            if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
-                _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
-
             return content, model
 
         except Exception as e:
@@ -408,9 +388,78 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
                 )
             continue
 
-    _ai_histories[uid].pop()
-    log_error(f"فشل جميع النماذج. آخر خطأ: {last_error}", uid)
-    ai_reset_model()
+    log_error(f"فشل جميع نماذج OpenRouter. آخر خطأ: {last_error}", uid)
+    return None, None
+
+def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
+    if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
+        log_error(f"لا يوجد مفتاح AI", uid)
+        return None, None
+
+    if uid not in _ai_histories:
+        _ai_histories[uid] = []
+    _ai_histories[uid].append({"role": "user", "content": user_text})
+    if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
+        _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
+
+    data_summary = get_data_summary_for_ai(uid, user_role)
+    bot_summary = get_bot_code_summary(uid)
+
+    if user_role == "owner":
+        role_desc = "أنت مالك البوت. لديك صلاحيات كاملة: إدارة المستخدمين، تغيير الرتب، تفعيل/تعطيل صلاحية AI، بالإضافة إلى كل صلاحيات الأدمن."
+    elif user_role == "admin":
+        role_desc = "أنت أدمن في البوت. لديك صلاحيات الإضافة والتعديل والحذف على جميع البيانات، ويمكنك إرسال إشعارات ورفع ملفات مباشرة. لا يمكنك رؤية بيانات المستخدمين الآخرين عبر هذه المحادثة."
+    else:
+        role_desc = "أنت مستخدم عادي. يمكنك فقط عرض البيانات (محاضرات، تكاليف، ملخصات، تنبيهات، أسعار). لا يمكنك رفع ملفات مباشرة، ولكن يمكنك طلب رفع ملف عبر الزر المخصص."
+
+    admin_note = ""
+    if user_role in ("admin", "owner"):
+        admin_note = (
+            "\n\n**ملاحظة للمستخدم (أدمن/مالك):**\n"
+            "يمكنك إصدار أوامر لإضافة وتعديل وحذف البيانات مباشرة باستخدام اللغة الطبيعية. مثال:\n"
+            "- أضف محاضرة رياضيات يوم 27/03/2026 الساعة 10:00-12:00 قاعة 101\n"
+            "- أضف تكليف برمجة تاريخ 28/03/2026: حل المسائل 1-5\n"
+            "- احذف محاضرة فيزياء يوم 26/03/2026\n"
+            "- أضف سعر رياضيات 5000\n"
+            "- أرسل إشعار للجميع: مرحباً\n"
+            "- بلغ المستخدم 123456789 يقول له: أهلاً\n"
+            "- فعّل AI للمستخدم 123456789\n"
+            "- اجعل 123456789 مالك\n"
+            "- أعد تعيين AI - إعادة تعيين نموذج الذكاء الاصطناعي (للمالك فقط)\n"
+        )
+
+    system_prompt = (
+        AI_SYSTEM_PROMPT_BASE + "\n\n" +
+        role_desc + "\n\n" +
+        f"### قاعدة البيانات ###\n{data_summary}\n\n" +
+        f"### شرح البوت ###\n{bot_summary}\n\n" +
+        admin_note +
+        "**تعليمات مهمة:**\n"
+        "1. إذا طلب المستخدم عدداً معيناً من العناصر، أعطه بالضبط العدد الذي طلبه.\n"
+        "2. إذا طلب بدون تحديد عدد، أعطه آخر عنصر (أو آخر 2-3 إذا كان ذلك مناسباً).\n"
+        "3. استخدم البيانات المتاحة فقط للإجابة.\n"
+        "4. لا تقدم معلومات عن المستخدمين الآخرين للمستخدم العادي أو الأدمن.\n"
+        "5. كن دقيقاً ومباشراً."
+    )
+
+    # تجربة Gemini أولاً
+    if GEMINI_API_KEY:
+        gemini_response, gemini_model = ask_gemini(uid, user_text, user_role, system_prompt)
+        if gemini_response:
+            _ai_histories[uid].append({"role": "assistant", "content": gemini_response})
+            if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
+                _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
+            return gemini_response, gemini_model
+
+    # ثم OpenRouter
+    if OPENROUTER_API_KEY:
+        openrouter_response, openrouter_model = ask_openrouter(uid, user_text, user_role, system_prompt, notify_fn, send_notify)
+        if openrouter_response:
+            _ai_histories[uid].append({"role": "assistant", "content": openrouter_response})
+            if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
+                _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
+            return openrouter_response, openrouter_model
+
     return None, None
 
 # ─────────────────────────────────────────────────────
@@ -566,7 +615,6 @@ def set_ai_allowed(uid, allowed):
         return False
 
 def get_user_auto_publish(uid):
-    """قراءة حالة النشر التلقائي من الشيت"""
     try:
         uid_str = str(uid)
         for row in users_sheet.get_all_values()[1:]:
@@ -578,7 +626,6 @@ def get_user_auto_publish(uid):
         return False
 
 def set_user_auto_publish(uid, enabled):
-    """تحديث حالة النشر التلقائي في الشيت"""
     try:
         uid_str = str(uid)
         rows = users_sheet.get_all_values()
@@ -592,7 +639,6 @@ def set_user_auto_publish(uid, enabled):
         return False
 
 def load_user_auto_publish(uid):
-    """تحميل حالة النشر التلقائي من الشيت إلى الذاكرة"""
     if uid not in user_auto_publish:
         user_auto_publish[uid] = get_user_auto_publish(uid)
 
@@ -719,7 +765,6 @@ def save_lecture(date, subject, time_val, room):
         new_row[2] = time_val
         new_row[3] = room
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
-        # إشعار تلقائي
         all_users, _ = get_all_user_ids()
         title = f"🕐 *محاضرة جديدة*"
         message = f"📌 *{subject}*\n📅 {date}\n🕐 {time_val}\n📍 {room}"
@@ -743,7 +788,6 @@ def save_text_to_cell(date, subject, col, text_val):
         new_row[1] = subject
         new_row[col] = text_val
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
-        # إشعار تلقائي
         type_name = {4: "تكليف", 6: "ملخص", 7: "تنبيه"}.get(col, "بيانات")
         icon = {4: "📝", 6: "📖", 7: "⚠️"}.get(col, "📌")
         title = f"{icon} *{type_name} جديد*"
@@ -780,7 +824,6 @@ def save_file_to_cell(date, subject, col, fids, merge=False):
         new_row[1] = subject
         new_row[col] = f"|{','.join(fids)}"
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
-        # إشعار تلقائي (للملفات)
         type_name = {4: "تكليف", 6: "ملخص"}.get(col, "ملف")
         icon = {4: "📝", 6: "📖"}.get(col, "📎")
         title = f"{icon} *{type_name} جديد (ملف)*"
@@ -1024,15 +1067,13 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid), bt("زر_الملخصات", uid))
         m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
 
-    # صف الأزرار الإضافية (سويتشات)
     row_switches = []
-    if OPENROUTER_API_KEY:
-        ai_status = "🟢" if user_ai_enabled.get(uid, False) else "🔴"
-        row_switches.append(f"{ai_status} 🤖 {bt('زر_مساعد_نايف', uid)}")
-        # زر النشر التلقائي (يظهر للجميع)
+    if OPENROUTER_API_KEY or GEMINI_API_KEY:
         load_user_auto_publish(uid)
         pub_status = "📢" if user_auto_publish.get(uid, False) else "🔕"
         row_switches.append(f"{pub_status} {bt('زر_نشر_تلقائي', uid)}")
+        ai_status = "🟢" if user_ai_enabled.get(uid, False) else "🔴"
+        row_switches.append(f"{ai_status} 🤖 {bt('زر_مساعد_نايف', uid)}")
     if row_switches:
         m.row(*row_switches)
 
@@ -1210,7 +1251,7 @@ def get_settings():
     return bt("رسالة_الترحيب"), bt("رسالة_الرفض")
 
 # ─────────────────────────────────────────────────────
-# دوال الأوامر الإدارية النصية (محسنة للغة الطبيعية)
+# دوال الأوامر الإدارية النصية
 # ─────────────────────────────────────────────────────
 def normalize_name(text):
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
@@ -1275,9 +1316,6 @@ def get_last_users(n=3):
         return []
 
 def notify_auto_publish(title, message, file_ids=None):
-    """
-    إرسال إشعارات للمستخدمين الذين فعّلوا النشر التلقائي.
-    """
     _, _, _, _, _, _, _, auto_publish_uids = get_users()
     if not auto_publish_uids:
         return
@@ -1302,10 +1340,8 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         return False, None
 
     text = text.strip()
-    executed = False
-    response = None
 
-    # ========== إعادة تعيين نموذج AI ==========
+    # إعادة تعيين نموذج AI
     pattern_reset_ai = r'(?:أعد|إعادة)?\s*تعيين\s*(?:نموذج)?\s*(?:الذكاء الاصطناعي|AI|النموذج)|ai_reset'
     m = re.search(pattern_reset_ai, text, re.IGNORECASE)
     if m:
@@ -1315,7 +1351,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         current_model = _ai_model()
         return True, f"✅ تم إعادة تعيين نموذج الذكاء الاصطناعي إلى {current_model['icon']} *{current_model['name']}*"
 
-    # ========== إرسال إشعار لمستخدم محدد ==========
+    # إرسال إشعار لمستخدم محدد
     pattern_broadcast_user = r'(?:أرسل إشعار للمستخدم|بلغ|أرسل إشعار لـ?)\s*(\d+)\s*(?:(?:يقول له|النص:?)\s*(.+))?'
     m = re.search(pattern_broadcast_user, text, re.IGNORECASE)
     if m:
@@ -1332,7 +1368,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         except:
             return True, f"❌ فشل إرسال الإشعار للمستخدم {target_uid}"
 
-    # ========== إرسال إشعار للجميع ==========
+    # إرسال إشعار للجميع
     pattern_broadcast_all = r'(?:أرسل إشعار للجميع|بلغ الجميع|أعلن)\s*(.+)'
     m = re.search(pattern_broadcast_all, text, re.IGNORECASE)
     if m:
@@ -1357,7 +1393,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         else:
             return False, "❌ يجب إدخال نص الإشعار."
 
-    # ========== إضافة محاضرة ==========
+    # إضافة محاضرة
     pattern_lecture = r'(?:أضف|إضافة)\s*محاضرة\s*(?:مادة\s*)?([^\s]+)\s*(?:يوم\s*)?(\d{1,2}/\d{1,2}/\d{4}|\d{1,2})\s*(?:الساعة|وقت)?\s*(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})\s*(?:قاعة\s*)?(.+)'
     m = re.search(pattern_lecture, text, re.IGNORECASE)
     if m:
@@ -1373,7 +1409,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             return True, f"✅ تم إضافة المحاضرة:\n📌 {subject}\n📅 {date_str}\n🕐 {time_val}\n📍 {room}"
         return True, "❌ حدث خطأ أثناء الإضافة"
 
-    # ========== إضافة تكليف ==========
+    # إضافة تكليف
     pattern_task = r'(?:أضف|إضافة)\s*(?:تكليف|واجب)\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_task, text, re.IGNORECASE)
     if m:
@@ -1386,7 +1422,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             return True, f"✅ تم إضافة التكليف:\n📌 {subject}\n📅 {date}\n📝 {task_text}"
         return True, "❌ خطأ في الحفظ"
 
-    # ========== إضافة ملخص ==========
+    # إضافة ملخص
     pattern_summary = r'(?:أضف|إضافة)\s*ملخص\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_summary, text, re.IGNORECASE)
     if m:
@@ -1399,7 +1435,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             return True, f"✅ تم إضافة الملخص:\n📌 {subject}\n📅 {date}\n📖 {summary_text}"
         return True, "❌ خطأ في الحفظ"
 
-    # ========== إضافة سعر ==========
+    # إضافة سعر
     pattern_price = r'(?:أضف|إضافة)\s*سعر\s*(?:مادة\s*)?([^\s]+)\s*(?:سعر\s*)?(.+)'
     m = re.search(pattern_price, text, re.IGNORECASE)
     if m:
@@ -1414,14 +1450,13 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
                 break
         if not updated:
             sheet.append_row(["", subject, "", "", "", price, "", ""], value_input_option="USER_ENTERED")
-        # إشعار تلقائي
         all_users, _ = get_all_user_ids()
         title = f"💰 *سعر جديد*"
         message = f"📌 *{subject}*\n💰 {price}"
         notify_auto_publish(title, message)
         return True, f"✅ تم تحديث سعر مادة {subject} إلى {price}"
 
-    # ========== إضافة تنبيه ==========
+    # إضافة تنبيه
     pattern_alert = r'(?:أضف|إضافة)\s*تنبيه\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_alert, text, re.IGNORECASE)
     if m:
@@ -1434,7 +1469,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             return True, f"✅ تم إضافة التنبيه:\n📌 {subject}\n📅 {date}\n⚠️ {alert_text}"
         return True, "❌ خطأ في الحفظ"
 
-    # ========== حذف عنصر ==========
+    # حذف عنصر
     pattern_delete = r'(?:احذف|حذف)\s*(محاضرة|تكليف|ملخص|تنبيه)\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})'
     m = re.search(pattern_delete, text, re.IGNORECASE)
     if m:
@@ -1451,7 +1486,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         else:
             return True, "النوع غير معروف."
 
-    # ========== تغيير رتبة مستخدم ==========
+    # تغيير رتبة مستخدم
     pattern_change_role = r'(?:اجعل|حول|غير)\s*(?:المستخدم)?\s*(\d+)\s*(مالك|أدمن|مستخدم)'
     m = re.search(pattern_change_role, text, re.IGNORECASE)
     if m:
@@ -1482,7 +1517,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             log_error(f"change_role: {e}")
             return True, "❌ حدث خطأ أثناء تغيير الرتبة"
 
-    # ========== تفعيل/تعطيل AI لمستخدم ==========
+    # تفعيل/تعطيل AI لمستخدم
     pattern_toggle_ai = r'(?:فعّل|عطّل|تفعيل|تعطيل)\s*AI\s*(?:للمستخدم)?\s*(\d+)'
     m = re.search(pattern_toggle_ai, text, re.IGNORECASE)
     if m:
@@ -1500,7 +1535,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         else:
             return True, f"❌ فشل تغيير صلاحية AI للمستخدم {target_uid}"
 
-    # ========== إضافة مستخدم جديد ==========
+    # إضافة مستخدم جديد
     pattern_add_user = r'(?:أضف|إضافة)\s*مستخدم\s*(.+?)(?:\s+ID\s*(\d+))?'
     m = re.search(pattern_add_user, text, re.IGNORECASE)
     if m:
@@ -1606,7 +1641,7 @@ def transcribe_voice(file_id, lang="ar"):
 # دوال إشعارات المالكين (مع منع التكرار)
 # ─────────────────────────────────────────────────────
 _last_notifications = {}
-_NOTIFICATION_COOLDOWN = 5
+_NOTIFICATION_COOLDOWN = 10
 
 def notify_owners_new_request(requester_id, requester_name, phone=""):
     owners = get_owner_ids()
@@ -1617,20 +1652,29 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
         "requester_name": requester_name,
         "phone": phone,
     }
-    markup = telebot.types.InlineKeyboardMarkup()
+    
+    ph = f"\n📞 `{phone}`" if phone else ""
+    text = (f"👤 *طلب انضمام جديد*\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 {requester_name}\n🆔 `{requester_id}`{ph}\n"
+            f"━━━━━━━━━━━━━━━━━━━━")
+    
+    markup = telebot.types.InlineKeyboardMarkup(row_width=3)
     markup.row(
-        telebot.types.InlineKeyboardButton("✅ قبول", callback_data=f"approve_{short_key}"),
-        telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{short_key}")
+        telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"approve_role_owner_{short_key}"),
+        telebot.types.InlineKeyboardButton("⭐ أدمن", callback_data=f"approve_role_admin_{short_key}"),
+        telebot.types.InlineKeyboardButton("👤 مستخدم", callback_data=f"approve_role_user_{short_key}"),
     )
-    ph = f"📞 الرقم: `{phone}`\n" if phone else ""
-    msg = (f"📩 طلب انضمام جديد!\n\n"
-           f"👤 الاسم: `{requester_name}`\n"
-           f"🆔 المعرف: `{requester_id}`\n{ph}")
+    markup.row(
+        telebot.types.InlineKeyboardButton("✏️ تغيير الاسم", callback_data=f"approve_rename_{short_key}"),
+        telebot.types.InlineKeyboardButton("🤖 تفعيل AI", callback_data=f"approve_ai_on_{short_key}"),
+        telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{short_key}"),
+    )
+    
     if requester_id not in request_msg_ids:
         request_msg_ids[requester_id] = {}
     for oid in owners:
         try:
-            sent = bot.send_message(oid, msg, parse_mode="Markdown", reply_markup=markup)
+            sent = bot.send_message(oid, text, parse_mode="Markdown", reply_markup=markup)
             request_msg_ids[requester_id][oid] = sent.message_id
         except:
             pass
@@ -2031,7 +2075,7 @@ def _execute_search(chat_id, uid):
     display_mode = state.get("display_mode", "subject")
     user_state.pop(uid, None)
     welcome, _ = get_settings()
-    allowed, admins, owners, open_all, admin_all, _, _ = get_users()
+    allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
     adm = admin_all or uid in admins
     own = uid in owners
     send_search_results(chat_id, uid, df, subjs, types_f, display_mode)
@@ -2330,6 +2374,26 @@ def set_bot_commands():
     ]
     bot.set_my_commands(commands)
 
+def send_typing_animation(chat_id, uid, duration=2):
+    """إرسال رسالة متحركة: نايف يكتب . → نايف يكتب .. → نايف يكتب ... ثم تختفي"""
+    base_text = bt("رسالة_نايف_يكتب", uid)
+    msg = bot.send_message(chat_id, f"{base_text} .")
+    frames = [" .", " ..", " ..."]
+    start = time.time()
+    i = 0
+    while time.time() - start < duration:
+        try:
+            bot.edit_message_text(f"{base_text}{frames[i % len(frames)]}",
+                                  chat_id, msg.message_id)
+            i += 1
+            time.sleep(0.3)
+        except:
+            break
+    try:
+        bot.delete_message(chat_id, msg.message_id)
+    except:
+        pass
+
 @bot.message_handler(commands=['start'])
 def start_message(message):
     text = message.text.strip()
@@ -2367,14 +2431,14 @@ def start_message(message):
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     uid = message.from_user.id
-    if not OPENROUTER_API_KEY:
+    if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
         bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
         return
     if not is_ai_allowed(uid):
         bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
         return
     user_ai_enabled[uid] = True
-    m = _ai_model()
+    m = _ai_model() if OPENROUTER_API_KEY else {"icon": "✨", "name": "Gemini 2.0 Flash"}
     bot.send_message(
         message.chat.id,
         bt("رسالة_ai_ترحيب", uid).format(model=f"{m['icon']} {m['name']}"),
@@ -2389,7 +2453,7 @@ def ai_reset_command(message):
         bot.send_message(message.chat.id, "⛔ هذا الأمر متاح للمالك فقط.")
         return
     ai_reset_model()
-    m = _ai_model()
+    m = _ai_model() if OPENROUTER_API_KEY else {"icon": "✨", "name": "Gemini 2.0 Flash"}
     bot.send_message(message.chat.id, f"✅ تمت إعادة تعيين النموذج إلى {m['icon']} *{m['name']}*", parse_mode="Markdown")
 
 @bot.message_handler(commands=['ai_clear'])
@@ -2464,6 +2528,11 @@ def handle_file(message):
     if not (open_all or uid in allowed):
         bot.send_message(message.chat.id, rejection)
         return
+    
+    # إذا كان صوت و AI مفعلاً، لا نتعامل معه هنا
+    if message.content_type == 'voice' and user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
+        return
+    
     auto_register_user(message, open_all=open_all)
     f_admin = admin_all or uid in admins
     f_owner = uid in owners
@@ -2571,6 +2640,7 @@ def handle_message(message):
     text = (message.text or "").strip()
     state = user_state.get(uid, {})
     back_btn = bt("زر_عوده", uid)
+    from_voice = False
 
     # معالجة التسجيلات الصوتية
     if message.content_type == 'voice':
@@ -2580,6 +2650,7 @@ def handle_message(message):
             transcribed = transcribe_voice(message.voice.file_id, lang="ar")
             if transcribed:
                 text = transcribed
+                from_voice = True
                 try:
                     bot.delete_message(message.chat.id, processing_msg.message_id)
                 except:
@@ -2609,9 +2680,9 @@ def handle_message(message):
                 )
             return
 
-    # معالجة الأزرار (تكون أولوية)
-    if text in BUTTON_TEXTS:
-        pass
+    # معالجة الأزرار (تكون أولوية، لكن نتجاهلها إذا كان النص من الصوت)
+    if text in BUTTON_TEXTS and not from_voice:
+        pass  # نستمر للمعالجة العادية
     # معالجة AI (إذا كان مفعلاً)
     elif user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
         user_role = get_user_role(uid)
@@ -2628,12 +2699,8 @@ def handle_message(message):
 
         response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=_notify, send_notify=(owner or admin))
         if response:
-            model_line = f"\n\n_{used_model['icon']} {used_model['name']}_"
-            full_text = response + model_line
-            # تأثير الكتابة
-            bot.send_chat_action(message.chat.id, "typing")
-            time.sleep(min(len(full_text) * 0.02, 2))
-            bot.send_message(message.chat.id, full_text, parse_mode="Markdown",
+            send_typing_animation(message.chat.id, uid, duration=min(len(response) * 0.03, 2.5))
+            bot.send_message(message.chat.id, response, parse_mode="Markdown",
                              reply_markup=main_menu(uid, admin=admin, owner=owner))
         else:
             bot.send_message(message.chat.id, bt("رسالة_ai_فشل", uid),
@@ -2664,46 +2731,68 @@ def handle_message(message):
         return
 
     # ========== باقي معالجة البوت العادي ==========
-    # معالجة تغيير الاسم
-    if state.get("renaming_user") and state.get("step") == "waiting_new_name":
-        target_uid = state.get("renaming_user")
+    # معالجة تغيير الاسم أثناء طلب الانضمام
+    if state.get("awaiting_rename_for_approval"):
+        short_key = state["awaiting_rename_for_approval"]
+        req_data = _approval_store.get(short_key)
+        if not req_data:
+            user_state.pop(uid, None)
+            bot.send_message(message.chat.id, "⚠️ انتهت صلاحية الطلب")
+            return
+        
         new_name = text.strip()
         if not new_name:
             bot.send_message(message.chat.id, "❌ الاسم لا يمكن أن يكون فارغاً.")
             return
-
+        
+        requester_id = req_data["requester_id"]
+        requester_name = req_data["requester_name"]
+        phone = req_data["phone"]
+        decided_by = (f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name)
+        
         try:
+            uid_str = str(requester_id)
             rows = users_sheet.get_all_values()
             found = False
+            es = 0
             for i, row in enumerate(rows[1:], start=2):
-                if len(row) > 2 and row[2].strip().lstrip("'") == target_uid:
+                if not row or not any(c.strip() for c in row):
+                    es += 1
+                    if es >= 5:
+                        break
+                    continue
+                es = 0
+                if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                     users_sheet.update_cell(i, 1, new_name)
+                    users_sheet.update_cell(i, 4, True)
                     found = True
                     break
-
-            if found:
-                bot.send_message(
-                    message.chat.id,
-                    f"✅ تم تغيير اسم المستخدم `{target_uid}` إلى:\n📝 *{new_name}*",
-                    parse_mode="Markdown"
-                )
-                _, row = find_user_row_by_id(target_uid)
-                if row:
-                    send_user_card(message.chat.id, row)
-            else:
-                bot.send_message(message.chat.id, f"❌ لم أجد المستخدم `{target_uid}`", parse_mode="Markdown")
-
-            user_state.pop(uid, None)
-            if is_owner_id(uid):
-                bot.send_message(message.chat.id, "↩️", reply_markup=manage_users_menu(uid))
-            else:
-                bot.send_message(message.chat.id, "↩️", reply_markup=main_menu(uid, admin=admin, owner=owner))
-
+            if not found:
+                users_sheet.append_row([new_name, phone, requester_id, True, False, False, False, False, False, False, False])
+            
+            pending_requests.discard(requester_id)
+            _approval_store.pop(short_key, None)
+            
+            try:
+                bot.send_message(requester_id, f"✅ تمت الموافقة على طلبك! اسمك الجديد: {new_name}\nأرسل /start للبدء.")
+            except:
+                pass
+            
+            notify_owners_action(requester_id, new_name, phone, decided_by, "approve")
+            bot.send_message(message.chat.id, f"✅ تمت الموافقة وتغيير الاسم إلى: {new_name}")
+            
+            msg_ids = request_msg_ids.pop(requester_id, {})
+            for oid, mid in msg_ids.items():
+                try:
+                    bot.delete_message(oid, mid)
+                except:
+                    pass
+                    
         except Exception as e:
-            log_error(f"rename_user: {e}")
-            bot.send_message(message.chat.id, "❌ حدث خطأ أثناء تغيير الاسم.")
-            user_state.pop(uid, None)
-
+            log_error(f"approve_with_rename: {e}")
+            bot.send_message(message.chat.id, "❌ حدث خطأ أثناء الموافقة")
+        
+        user_state.pop(uid, None)
         return
 
     # اختيار اللغة
@@ -2775,7 +2864,7 @@ def handle_message(message):
         # زر المساعد الذكي (سويتش)
         ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
         if text in [f"🟢 {ai_button_text}", f"🔴 {ai_button_text}", ai_button_text]:
-            if not OPENROUTER_API_KEY:
+            if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
                 bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
                 return
             if not is_ai_allowed(uid):
@@ -2981,7 +3070,7 @@ def handle_message(message):
             send_files_with_text(message.chat.id, all_text, all_fids, reply_markup=dates_menu_kb(dates, uid))
             return
 
-        # أزرار القائمة الرئيسية
+        # أزرار القائمة الرئيسية (التكاليف، الجدول، الملخصات، الأسعار، التنبيهات)
         if text == bt("زر_التكاليف", uid):
             ld = get_last_date(data, 4)
             if not ld:
@@ -3145,27 +3234,7 @@ def handle_message(message):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
                 return
             user_state[uid] = {"managing_users": True, "step": "menu"}
-            rows_all = users_sheet.get_all_values()
-            entries = []
-            es = 0
-            for row in rows_all[1:]:
-                if not row or not any(c.strip() for c in row):
-                    es += 1
-                    if es >= 5:
-                        break
-                    continue
-                es = 0
-                name = row[0].strip()
-                uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-                own_v = row[5].strip().upper() if len(row) > 5 else "FALSE"
-                adm_v = row[4].strip().upper() if len(row) > 4 else "FALSE"
-                if not name or name == "الكل" or not uid_str:
-                    continue
-                entries.append((name, uid_str, own_v, adm_v, row))
-            entries.sort(key=lambda x: (0 if x[2] == "TRUE" else 1 if x[3] == "TRUE" else 2))
-            bot.send_message(message.chat.id, "👥 *قائمة المستخدمين:*\n" + "─" * 25, parse_mode="Markdown", reply_markup=manage_users_menu(uid))
-            for _, _, _, _, row in entries:
-                send_user_card(message.chat.id, row)
+            bot.send_message(message.chat.id, "👥 *إدارة المستخدمين*", parse_mode="Markdown", reply_markup=manage_users_menu(uid))
             return
 
         if state.get("managing_users"):
@@ -3834,7 +3903,124 @@ def handle_show_user(call):
     else:
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
 
-@bot.callback_query_handler(func=lambda call: (call.data.startswith("approve_") or call.data.startswith("reject_")))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_role_"))
+def handle_approve_with_role(call):
+    caller_id = call.from_user.id
+    if not is_owner_id(caller_id):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    parts = call.data.split("_", 3)
+    new_role = parts[2]
+    short_key = parts[3]
+    req_data = _approval_store.get(short_key)
+    if not req_data:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب")
+        return
+    requester_id = req_data["requester_id"]
+    requester_name = req_data["requester_name"]
+    phone = req_data["phone"]
+    decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
+    try:
+        uid_str = str(requester_id)
+        rows = users_sheet.get_all_values()
+        found = False
+        es = 0
+        for i, row in enumerate(rows[1:], start=2):
+            if not row or not any(c.strip() for c in row):
+                es += 1
+                if es >= 5:
+                    break
+                continue
+            es = 0
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                if new_role == "owner":
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
+                elif new_role == "admin":
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
+                else:
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                found = True
+                break
+        if not found:
+            if new_role == "owner":
+                users_sheet.append_row([requester_name, phone, requester_id, True, True, True, False, False, False, False, False])
+            elif new_role == "admin":
+                users_sheet.append_row([requester_name, phone, requester_id, True, True, False, False, False, False, False, False])
+            else:
+                users_sheet.append_row([requester_name, phone, requester_id, True, False, False, False, False, False, False, False])
+        pending_requests.discard(requester_id)
+        _approval_store.pop(short_key, None)
+        role_name = "مالك" if new_role == "owner" else ("أدمن" if new_role == "admin" else "مستخدم")
+        try:
+            bot.send_message(requester_id, f"✅ تمت الموافقة على طلبك! رتبتك: {role_name}\nأرسل /start للبدء.")
+        except:
+            pass
+        notify_owners_action(requester_id, requester_name, phone, decided_by, f"set_{new_role}")
+        bot.answer_callback_query(call.id, f"✅ تمت الموافقة كـ {role_name}")
+        msg_ids = request_msg_ids.pop(requester_id, {})
+        for oid, mid in msg_ids.items():
+            try:
+                bot.delete_message(oid, mid)
+            except:
+                pass
+    except Exception as e:
+        log_error(f"approve_with_role: {e}")
+        bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_ai_on_"))
+def handle_approve_with_ai(call):
+    caller_id = call.from_user.id
+    if not is_owner_id(caller_id):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    short_key = call.data.split("_")[3]
+    req_data = _approval_store.get(short_key)
+    if not req_data:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب")
+        return
+    requester_id = req_data["requester_id"]
+    requester_name = req_data["requester_name"]
+    phone = req_data["phone"]
+    decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
+    try:
+        uid_str = str(requester_id)
+        rows = users_sheet.get_all_values()
+        found = False
+        es = 0
+        for i, row in enumerate(rows[1:], start=2):
+            if not row or not any(c.strip() for c in row):
+                es += 1
+                if es >= 5:
+                    break
+                continue
+            es = 0
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                users_sheet.update_cell(i, 4, True)
+                users_sheet.update_cell(i, AI_ALLOWED_COL + 1, True)
+                found = True
+                break
+        if not found:
+            users_sheet.append_row([requester_name, phone, requester_id, True, False, False, False, False, False, True, False])
+        pending_requests.discard(requester_id)
+        _approval_store.pop(short_key, None)
+        try:
+            bot.send_message(requester_id, f"✅ تمت الموافقة على طلبك! رتبتك: مستخدم\n🤖 تم تفعيل المساعد الذكي لك!\nأرسل /start للبدء.")
+        except:
+            pass
+        notify_owners_action(requester_id, requester_name, phone, decided_by, "set_user")
+        notify_owners_action(requester_id, requester_name, phone, decided_by, "ai_enabled")
+        bot.answer_callback_query(call.id, "✅ تمت الموافقة مع تفعيل AI")
+        msg_ids = request_msg_ids.pop(requester_id, {})
+        for oid, mid in msg_ids.items():
+            try:
+                bot.delete_message(oid, mid)
+            except:
+                pass
+    except Exception as e:
+        log_error(f"approve_with_ai: {e}")
+        bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") and not call.data.startswith("approve_role_") and not call.data.startswith("approve_ai_on_"))
 def handle_approval(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
@@ -3849,45 +4035,71 @@ def handle_approval(call):
     requester_id = req_data["requester_id"]
     requester_name = req_data["requester_name"]
     phone = req_data["phone"]
-    if call.data.startswith("approve_"):
-        try:
-            uid_str = str(requester_id)
-            rows = users_sheet.get_all_values()
-            found = False
-            es = 0
-            for i, row in enumerate(rows[1:], start=2):
-                if not row or not any(c.strip() for c in row):
-                    es += 1
-                    if es >= 5:
-                        break
-                    continue
-                es = 0
-                if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                    users_sheet.update_cell(i, 4, True)
-                    found = True
+    try:
+        uid_str = str(requester_id)
+        rows = users_sheet.get_all_values()
+        found = False
+        es = 0
+        for i, row in enumerate(rows[1:], start=2):
+            if not row or not any(c.strip() for c in row):
+                es += 1
+                if es >= 5:
                     break
-            if not found:
-                add_user_to_sheet(requester_name, requester_id)
-            pending_requests.discard(requester_id)
-            _approval_store.pop(short_key, None)
-            try:
-                bot.send_message(requester_id, bt("رسالة_موافقة", requester_id))
-            except:
-                pass
-            notify_owners_action(requester_id, requester_name, phone, decided_by, "approve")
-        except Exception as e:
-            log_error(f"approve: {e}")
-            bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
-            return
-    else:
+                continue
+            es = 0
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                users_sheet.update_cell(i, 4, True)
+                found = True
+                break
+        if not found:
+            add_user_to_sheet(requester_name, requester_id)
         pending_requests.discard(requester_id)
         _approval_store.pop(short_key, None)
         try:
-            bot.send_message(requester_id, bt("رسالة_رفض_طلب", requester_id))
+            bot.send_message(requester_id, bt("رسالة_موافقة", requester_id))
         except:
             pass
-        notify_owners_action(requester_id, requester_name, phone, decided_by, "reject")
-    bot.answer_callback_query(call.id)
+        notify_owners_action(requester_id, requester_name, phone, decided_by, "approve")
+        bot.answer_callback_query(call.id, "✅ تمت الموافقة")
+        msg_ids = request_msg_ids.pop(requester_id, {})
+        for oid, mid in msg_ids.items():
+            try:
+                bot.delete_message(oid, mid)
+            except:
+                pass
+    except Exception as e:
+        log_error(f"approve: {e}")
+        bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("reject_"))
+def handle_rejection(call):
+    caller_id = call.from_user.id
+    if not is_owner_id(caller_id):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    short_key = call.data.split("_", 1)[1]
+    req_data = _approval_store.get(short_key)
+    if not req_data:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب")
+        return
+    requester_id = req_data["requester_id"]
+    requester_name = req_data["requester_name"]
+    phone = req_data["phone"]
+    decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
+    pending_requests.discard(requester_id)
+    _approval_store.pop(short_key, None)
+    try:
+        bot.send_message(requester_id, bt("رسالة_رفض_طلب", requester_id))
+    except:
+        pass
+    notify_owners_action(requester_id, requester_name, phone, decided_by, "reject")
+    bot.answer_callback_query(call.id, "❌ تم الرفض")
+    msg_ids = request_msg_ids.pop(requester_id, {})
+    for oid, mid in msg_ids.items():
+        try:
+            bot.delete_message(oid, mid)
+        except:
+            pass
 
 @bot.callback_query_handler(func=lambda call: (call.data.startswith("ms_subj:") or call.data.startswith("ms_type:")))
 def handle_multiselect(call):
@@ -4012,11 +4224,17 @@ def run():
     load_bot_texts()
     load_button_texts()
     set_bot_commands()
-    if not OPENROUTER_API_KEY:
-        log_warning("⚠️ OPENROUTER_API_KEY غير موجود. لن يعمل المساعد الذكي.")
+    if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
+        log_warning("⚠️ لا يوجد مفتاح AI. لن يعمل المساعد الذكي.")
+    elif not OPENROUTER_API_KEY:
+        log_info("✅ Gemini API فقط مفعل.")
+    elif not GEMINI_API_KEY:
+        log_info("✅ OpenRouter API فقط مفعل.")
+    else:
+        log_info("✅ Gemini و OpenRouter مفعلان (Gemini أولاً).")
     threading.Thread(target=_watch_sheet_loop, daemon=True).start()
     log_info("بوت الدراسة يعمل ✅")
     bot.infinity_polling()
 
 if __name__ == "__main__":
-    run() 
+    run()
