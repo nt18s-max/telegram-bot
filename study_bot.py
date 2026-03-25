@@ -13,9 +13,10 @@ import requests as _requests
 load_dotenv()
 
 YEMEN_TZ        = pytz.timezone('Asia/Aden')
-LOG_BOT_TOKEN   = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
-STUDY_BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "")
-SHEET_KEY       = os.environ.get("SHEET_KEY", "")
+LOG_BOT_TOKEN        = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
+STUDY_BOT_TOKEN      = os.environ.get("STUDY_BOT_TOKEN", "")
+SHEET_KEY            = os.environ.get("SHEET_KEY", "")
+OPENROUTER_API_KEY   = os.environ.get("OPENROUTER_API_KEY", "")
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)-8s | %(message)s",
@@ -123,6 +124,139 @@ _file_req_counter = [0]
 _approval_store   = {}   # {short_key: {requester_id, name, phone}} للتحايل على حد 64 byte
 _approval_counter = [0]
 _users_snapshot   = {}   # للمراقبة
+
+# ─────────────────────────────────────────────────────
+# 🤖 AI — OpenRouter fallback chain
+# ─────────────────────────────────────────────────────
+AI_MODELS = [
+    {
+        "id":    "google/gemma-3-27b-it:free",
+        "name":  "Gemma 3 27B",
+        "icon":  "🟢",
+    },
+    {
+        "id":    "meta-llama/llama-3.3-70b-instruct:free",
+        "name":  "Llama 3.3 70B",
+        "icon":  "🦙",
+    },
+    {
+        "id":    "mistralai/mistral-small-3.1-24b-instruct:free",
+        "name":  "Mistral Small",
+        "icon":  "💨",
+    },
+]
+
+_ai_current_model = [0]          # index النموذج الحالي
+_ai_histories     = {}            # {uid: [{"role":..,"content":..}]}
+_AI_MAX_HISTORY   = 20            # عدد رسائل السياق المحفوظة
+
+AI_SYSTEM_PROMPT = (
+    "أنت مساعد ذكي لطلاب الجامعة. "
+    "أجب دائماً باللغة العربية ما لم يطلب المستخدم غير ذلك. "
+    "إجاباتك مختصرة وواضحة ومناسبة للطلاب. "
+    "لا تستخدم markdown بشكل مبالغ فيه."
+)
+
+def _ai_model():
+    return AI_MODELS[_ai_current_model[0]]
+
+def _ai_next_model():
+    """ينتقل للنموذج التالي ويُعيد بياناته، أو None لو انتهت كلها"""
+    idx = _ai_current_model[0] + 1
+    if idx < len(AI_MODELS):
+        _ai_current_model[0] = idx
+        return AI_MODELS[idx]
+    return None
+
+def ai_reset_model():
+    """إعادة تعيين النموذج للأول (يُستدعى يومياً أو يدوياً)"""
+    _ai_current_model[0] = 0
+
+def ask_ai(uid, user_text, notify_fn=None):
+    """
+    أرسل رسالة لـ OpenRouter مع الـ fallback التلقائي.
+    notify_fn(msg) يُستدعى لإرسال إشعار للمستخدم عند تبديل النموذج.
+    يُعيد (response_text, model_info) أو (None, None) عند الفشل الكامل.
+    """
+    if not OPENROUTER_API_KEY:
+        return None, None
+
+    # تهيئة السياق
+    if uid not in _ai_histories:
+        _ai_histories[uid] = []
+
+    _ai_histories[uid].append({"role": "user", "content": user_text})
+    # احتفظ بآخر N رسائل فقط
+    if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
+        _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type":  "application/json",
+        "HTTP-Referer":  "https://t.me/study_bot",
+        "X-Title":       "Study Bot",
+    }
+
+    tried = set()
+    while True:
+        model = _ai_model()
+        if model["id"] in tried:
+            break  # جرّبنا كل النماذج
+        tried.add(model["id"])
+
+        payload = {
+            "model": model["id"],
+            "messages": [
+                {"role": "system", "content": AI_SYSTEM_PROMPT},
+                *_ai_histories[uid],
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.7,
+        }
+
+        try:
+            resp = _requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers, json=payload, timeout=30
+            )
+
+            if resp.status_code == 429:
+                # وصل الحد → جرّب التالي
+                next_m = _ai_next_model()
+                if next_m and notify_fn:
+                    notify_fn(
+                        f"⚠️ وصل حد النموذج الحالي.\n"
+                        f"🔄 جاري التبديل إلى {next_m['icon']} *{next_m['name']}*..."
+                    )
+                if not next_m:
+                    break
+                continue
+
+            if resp.status_code != 200:
+                next_m = _ai_next_model()
+                if not next_m:
+                    break
+                continue
+
+            data    = resp.json()
+            content = data["choices"][0]["message"]["content"].strip()
+
+            # احفظ رد الـ AI في السياق
+            _ai_histories[uid].append({"role": "assistant", "content": content})
+            if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
+                _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
+
+            return content, model
+
+        except Exception:
+            next_m = _ai_next_model()
+            if not next_m:
+                break
+            continue
+
+    # كل النماذج فشلت
+    _ai_histories[uid].pop()  # احذف الرسالة الأخيرة
+    return None, None
 
 DAYS_AR   = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
 DAYS_EN   = {0:"Monday",1:"Tuesday",2:"Wednesday",3:"Thursday",4:"Friday",5:"Saturday",6:"Sunday"}
@@ -868,10 +1002,12 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_اضافة"),           bt("زر_تعديل"))
         m.row(bt("زر_اشعار"),           bt("زر_رفع_ملف"),     bt("زر_رفع_تعليمات"))
         if owner: m.add(bt("زر_المستخدمين"))
+        if OPENROUTER_API_KEY: m.add("🤖 مساعد ذكي")
     else:
         m.row(bt("زر_التاريخ"),        bt("زر_المواد"))
         m.row(bt("زر_التكاليف"),        bt("زر_الجدول"),      bt("زر_الملخصات"))
         m.row(bt("زر_الاسعار"),         bt("زر_طلب_رفع"),     bt("زر_التنبيهات"))
+        if OPENROUTER_API_KEY: m.add("🤖 مساعد ذكي")
     return m
 
 def back_only_menu():
@@ -1535,6 +1671,54 @@ def start_message(message):
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
 
 
+# ─────────────────────────────────────────────────────
+# 🤖 /ai — المساعد الذكي
+# ─────────────────────────────────────────────────────
+@bot.message_handler(commands=['ai'])
+def ai_command(message):
+    """تشغيل المساعد الذكي عبر الأمر /ai"""
+    if not OPENROUTER_API_KEY:
+        bot.send_message(message.chat.id, "❌ المساعد الذكي غير مفعّل."); return
+    uid = message.from_user.id
+    allowed, _, _, open_all, _, _ = get_users()
+    if not (open_all or uid in allowed):
+        bot.send_message(message.chat.id, "⛔ غير مسموح."); return
+    _ai_histories.pop(uid, None)
+    user_state[uid] = {"ai_chat": True}
+    m = _ai_model()
+    bot.send_message(
+        message.chat.id,
+        "🤖 *المساعد الذكي*\n"
+        f"النموذج الحالي: {m['icon']} *{m['name']}*\n\n"
+        "اكتب سؤالك وسأرد عليك.\n"
+        "للخروج اضغط 🔙 العودة.",
+        parse_mode="Markdown",
+        reply_markup=back_only_menu()
+    ); return
+
+
+@bot.message_handler(commands=['ai_reset'])
+def ai_reset_command(message):
+    """إعادة تعيين النموذج للأول (للمالك فقط)"""
+    uid = message.from_user.id
+    _, _, owners, _, _, _ = get_users()
+    if uid not in owners:
+        bot.send_message(message.chat.id, "⛔ غير مسموح."); return
+    ai_reset_model()
+    m = _ai_model()
+    bot.send_message(message.chat.id,
+        f"✅ تمت إعادة تعيين النموذج إلى {m['icon']} *{m['name']}*",
+        parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['ai_clear'])
+def ai_clear_command(message):
+    """مسح سياق المحادثة"""
+    uid = message.from_user.id
+    _ai_histories.pop(uid, None)
+    bot.send_message(message.chat.id, "✅ تم مسح سياق المحادثة.")
+
+
 @bot.message_handler(commands=['server'])
 def server_command(message):
     inline = telebot.types.InlineKeyboardMarkup()
@@ -1822,6 +2006,55 @@ def handle_message(message):
         data = get_data()
 
         # ══════════════════════════════════════════
+        # 🤖 زر المساعد الذكي
+        # ══════════════════════════════════════════
+        if text == "🤖 مساعد ذكي" and OPENROUTER_API_KEY:
+            _ai_histories.pop(uid, None)
+            user_state[uid] = {"ai_chat": True}
+            m = _ai_model()
+            bot.send_message(
+                message.chat.id,
+                "🤖 *المساعد الذكي*\n"
+                f"النموذج الحالي: {m['icon']} *{m['name']}*\n\n"
+                "اكتب سؤالك وسأرد عليك.\n"
+                "للخروج اضغط 🔙 العودة.",
+                parse_mode="Markdown",
+                reply_markup=back_only_menu()
+            ); return
+
+        # ══════════════════════════════════════════
+        # 🤖 محادثة المساعد الذكي
+        # ══════════════════════════════════════════
+        if state.get("ai_chat"):
+            if not OPENROUTER_API_KEY:
+                user_state.pop(uid, None); return
+
+            # إظهار "جاري الكتابة..."
+            bot.send_chat_action(message.chat.id, "typing")
+
+            def _notify(msg):
+                bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+            response, used_model = ask_ai(uid, text, notify_fn=_notify)
+
+            if response:
+                model_line = f"\n\n_{used_model['icon']} {used_model['name']}_"
+                bot.send_message(
+                    message.chat.id,
+                    response + model_line,
+                    parse_mode="Markdown",
+                    reply_markup=back_only_menu()
+                )
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    "❌ لم أتمكن من الرد حالياً. حاول لاحقاً.",
+                    reply_markup=main_menu(uid, admin=admin, owner=owner)
+                )
+                user_state.pop(uid, None)
+            return
+
+        # ══════════════════════════════════════════
         # زر العودة
         # ══════════════════════════════════════════
         if text == back_btn:
@@ -1857,7 +2090,8 @@ def handle_message(message):
             if state.get("uploading") or state.get("uploading_help") \
                or state.get("requesting_upload") or state.get("broadcasting") \
                or state.get("adding_data") or state.get("editing_data") \
-               or state.get("managing_users") or state.get("viewing_help"):
+               or state.get("managing_users") or state.get("viewing_help") \
+               or state.get("ai_chat"):
                 user_state.pop(uid, None)
                 bot.send_message(message.chat.id, welcome,
                                  reply_markup=main_menu(uid, admin=admin, owner=owner)); return
