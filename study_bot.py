@@ -1,19 +1,6 @@
 # ====================================================
 # study_bot.py — النسخة النهائية الكاملة
-# جميع الميزات المطلوبة:
-# - AI بنماذج محدثة و fallback ذكي
-# - صلاحية AI مستقلة (عمود J)
-# - زر AI كسويتش (يظهر للجميع، يتطلب صلاحية للاستخدام)
-# - دعم الصوتيات (تحويل إلى نص)
-# - أوامر إدارية نصية للأدمن والمالك
-# - قراءة النصوص من الشيت (bot_texts) بدعم اللغتين
-# - الذكاء الاصطناعي يفهم البوت ديناميكياً من الكود
-# - الذكاء الاصطناعي يقرأ بيانات الشيت ويجيب عليها
-# - الـ AI يحترم صلاحيات الرتب (مستخدم/أدمن/مالك)
-# - تجاهل الأزرار أثناء تفعيل AI (لا يتم الرد عليها)
-# - زر سري لعرض جميع المستخدمين في رسالة واحدة مع أسماء قابلة للنقر
-# - بطاقة مستخدم محسنة (أزرار Inline فقط)
-# - مراقبة تغييرات الشيت وإشعارات
+# جميع الميزات المطلوبة مع الأوامر الإدارية عبر AI
 # ====================================================
 
 import telebot
@@ -27,33 +14,35 @@ import requests as _requests
 
 load_dotenv()
 
-YEMEN_TZ        = pytz.timezone('Asia/Aden')
-LOG_BOT_TOKEN        = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
-STUDY_BOT_TOKEN      = os.environ.get("STUDY_BOT_TOKEN", "")
-SHEET_KEY            = os.environ.get("SHEET_KEY", "")
-OPENROUTER_API_KEY   = os.environ.get("OPENROUTER_API_KEY", "")
+YEMEN_TZ = pytz.timezone('Asia/Aden')
+LOG_BOT_TOKEN = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
+STUDY_BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "")
+SHEET_KEY = os.environ.get("SHEET_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)-8s | %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("StudyBot")
 
-bot   = telebot.TeleBot(STUDY_BOT_TOKEN)
+bot = telebot.TeleBot(STUDY_BOT_TOKEN)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
 try:
     gcreds = os.environ.get("GOOGLE_CREDENTIALS")
-    creds  = ServiceAccountCredentials.from_json_keyfile_dict(
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
         json.loads(gcreds), scope) if gcreds else \
         ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    client          = gspread.authorize(creds)
-    spreadsheet     = client.open_by_key(SHEET_KEY)
-    sheet           = spreadsheet.sheet1
-    users_sheet     = spreadsheet.worksheet("المستخدمين")
-    help_sheet      = spreadsheet.worksheet("المساعدة")
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(SHEET_KEY)
+    sheet = spreadsheet.sheet1
+    users_sheet = spreadsheet.worksheet("المستخدمين")
+    help_sheet = spreadsheet.worksheet("المساعدة")
     bot_texts_sheet = spreadsheet.worksheet("bot_texts")
-    try:    rooms_sheet = spreadsheet.worksheet("القاعات")
-    except: rooms_sheet = None
+    try:
+        rooms_sheet = spreadsheet.worksheet("القاعات")
+    except:
+        rooms_sheet = None
 except Exception as _e:
     logger.critical(f"خطأ Google Sheets: {_e}")
     sheet = users_sheet = help_sheet = bot_texts_sheet = rooms_sheet = None
@@ -150,6 +139,8 @@ DEFAULT_BOT_TEXTS = {
     "رسالة_تم_التعديل_en": "✅ Updated!",
     "رسالة_ادمن_فقط_ar": "⛔ فقط المدير يستطيع القيام بهذا.",
     "رسالة_ادمن_فقط_en": "⛔ Only admin can do this.",
+    "زر_مساعد_نايف_ar": "مساعد نايف",
+    "زر_مساعد_نايف_en": "Naif Assistant",
     "رسالة_ai_غير_مفعل_ar": "❌ المساعد الذكي غير مفعّل.",
     "رسالة_ai_غير_مفعل_en": "❌ AI assistant is not enabled.",
     "رسالة_ai_غير_مسموح_ar": "⛔ لا تملك صلاحية استخدام المساعد الذكي.",
@@ -166,8 +157,14 @@ DEFAULT_BOT_TEXTS = {
     "رسالة_ai_تعطيل_en": "🤖 AI assistant permission has been revoked.",
     "رسالة_ai_ترحيب_ar": "🤖 *المساعد الذكي*\nالنموذج الحالي: {model}\n\nاكتب سؤالك وسأرد عليك.\nللخروج اضغط 🔙 العودة.",
     "رسالة_ai_ترحيب_en": "🤖 *AI Assistant*\nCurrent model: {model}\n\nType your question and I will answer.\nTo exit press 🔙 Back.",
-    "زر_مساعد_نايف_ar": "مساعد نايف",
-    "زر_مساعد_نايف_en": "Naif Assistant",
+    "رسالة_تغيير_اللغة_ar": "🌐 اختر اللغة / Choose Language",
+    "رسالة_تغيير_اللغة_en": "🌐 Choose Language / اختر اللغة",
+    "رسالة_تم_تغيير_اللغة_ar": "✅ تم تغيير اللغة!",
+    "رسالة_تم_تغيير_اللغة_en": "✅ Language changed!",
+    "رسالة_طلب_جهة_اتصال_ar": "📲 شارك جهة اتصالك لتسهيل التواصل معك:",
+    "رسالة_طلب_جهة_اتصال_en": "📲 Share your contact to facilitate communication:",
+    "رسالة_شكر_اتصال_ar": "✅ شكراً! تم إرسال معلوماتك.",
+    "رسالة_شكر_اتصال_en": "✅ Thank you! Your information has been sent.",
 }
 BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 
@@ -187,7 +184,6 @@ def load_bot_texts():
         logger.warning(f"bot_texts error: {e}")
 
 def bt(key, uid=None):
-    """إرجاع النص حسب لغة المستخدم"""
     lang = "ar"
     if uid:
         load_user_lang(uid)
@@ -203,32 +199,33 @@ def bt(key, uid=None):
 # ─────────────────────────────────────────────────────
 # متغيرات الحالة
 # ─────────────────────────────────────────────────────
-user_state       = {}
-user_lang        = {}
+user_state = {}
+user_lang = {}
 pending_requests = set()
-request_msg_ids   = {}
-_file_req_store   = {}
+request_msg_ids = {}
+_file_req_store = {}
 _file_req_counter = [0]
-_approval_store   = {}
+_approval_store = {}
 _approval_counter = [0]
-_users_snapshot   = {}
-user_ai_enabled   = {}  # {uid: True/False} حالة تفعيل AI
+_users_snapshot = {}
+user_ai_enabled = {}
 
 # ─────────────────────────────────────────────────────
-# 🤖 AI — OpenRouter مع fallback محسّن
+# 🤖 AI — OpenRouter (نماذج محدثة)
 # ─────────────────────────────────────────────────────
 AI_MODELS = [
     {"id": "openrouter/free", "name": "Auto (أفضل نموذج مجاني)", "icon": "🎯"},
-    {"id": "xiaomi/mimo-v2-pro:free", "name": "MiMo-V2-Pro (1T)", "icon": "🤖"},
-    {"id": "nvidia/nemotron-3-super:free", "name": "NVIDIA Nemotron 3 Super", "icon": "🟢"},
-    {"id": "z-ai/glm-4.5-air:free", "name": "GLM-4.5-Air", "icon": "🟣"},
-    {"id": "openai/gpt-oss-120b:free", "name": "GPT-OSS 120B", "icon": "🔵"},
-    {"id": "arcee-ai/trinity-large-preview:free", "name": "Trinity-Large", "icon": "✨"},
+    {"id": "google/gemini-2.0-flash-exp:free", "name": "Gemini 2.0 Flash", "icon": "✨"},
+    {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Llama 3.2 3B", "icon": "🦙"},
+    {"id": "microsoft/phi-3-mini-128k-instruct:free", "name": "Phi-3 Mini", "icon": "🔵"},
+    {"id": "mistralai/mistral-7b-instruct:free", "name": "Mistral 7B", "icon": "💨"},
+    {"id": "qwen/qwen-2.5-7b-instruct:free", "name": "Qwen 2.5 7B", "icon": "🐉"},
+    {"id": "deepseek/deepseek-chat:free", "name": "DeepSeek Chat", "icon": "🔍"},
 ]
 
 _ai_current_model = [0]
-_ai_histories     = {}
-_AI_MAX_HISTORY   = 20
+_ai_histories = {}
+_AI_MAX_HISTORY = 20
 
 AI_SYSTEM_PROMPT_BASE = (
     "أنت مساعد ذكي لطلاب الجامعة. أجب دائماً باللغة العربية ما لم يطلب المستخدم غير ذلك. "
@@ -260,7 +257,6 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
         _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
 
-    # بناء system prompt حسب الرتبة مع تضمين بيانات البوت والبيانات
     data_summary = get_data_summary_for_ai(uid, user_role)
     bot_summary = get_bot_code_summary(uid)
 
@@ -275,14 +271,14 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if user_role in ("admin", "owner"):
         admin_note = (
             "\n\n**ملاحظة للمستخدم (أدمن/مالك):**\n"
-            "يمكنك إصدار أوامر لإضافة وتعديل وحذف البيانات مباشرة من خلال هذه المحادثة. مثال:\n"
+            "يمكنك إصدار أوامر لإضافة وتعديل وحذف البيانات مباشرة. مثال:\n"
             "- أضف محاضرة مادة الرياضيات تاريخ 27/03/2026 وقت 08:00-10:00 قاعة القديم:101\n"
             "- أضف تكليف مادة البرمجة تاريخ 28/03/2026 نص: حل المسائل 1-5\n"
             "- احذف محاضرة مادة الفيزياء تاريخ 26/03/2026\n"
             "- أضف سعر مادة الفيزياء 5000\n"
-            "- أضف تنبيه مادة الرياضيات تاريخ 29/03/2026 نص: اختبار الأسبوع القادم\n"
-            "إذا قمت بكتابة أمر كهذا، سيتم تنفيذه فوراً دون الحاجة لاستخدام الأزرار.\n"
-            "إذا كان سؤالك عادياً (غير أمر إداري)، فسأجيبك بالطريقة العادية."
+            "- أرسل إشعار سيتم تعطيل البوت غداً\n"
+            "- فعّل AI للمستخدم 123456789\n"
+            "- اجعل 123456789 مالك\n"
         )
 
     system_prompt = (
@@ -301,9 +297,9 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type":  "application/json",
-        "HTTP-Referer":  "https://t.me/study_bot",
-        "X-Title":       "Study Bot",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://t.me/study_bot",
+        "X-Title": "Study Bot",
     }
 
     tried = set()
@@ -356,8 +352,17 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
                     )
                 continue
 
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
+            try:
+                data = resp.json()
+                if "choices" not in data or not data["choices"]:
+                    log_error(f"استجابة غير متوقعة من {model['id']}: {data}", uid)
+                    next_m = _ai_next_model()
+                    continue
+                content = data["choices"][0]["message"]["content"].strip()
+            except (KeyError, AttributeError, TypeError, json.JSONDecodeError) as e:
+                log_error(f"خطأ في تحليل استجابة {model['id']}: {e}", uid)
+                next_m = _ai_next_model()
+                continue
 
             _ai_histories[uid].append({"role": "assistant", "content": content})
             if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
@@ -386,7 +391,7 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
 # ─────────────────────────────────────────────────────
 # دوال مساعدة للشيت
 # ─────────────────────────────────────────────────────
-AI_ALLOWED_COL = 9   # العمود J
+AI_ALLOWED_COL = 9
 
 def get_users():
     try:
@@ -399,24 +404,24 @@ def get_users():
                 if es >= 5: break
                 continue
             es = 0
-            name        = row[0].strip()
-            uid_str     = row[2].strip().lstrip("'") if len(row) > 2 else ""
+            name = row[0].strip()
+            uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
             allowed_val = row[3].strip().upper() if len(row) > 3 else "FALSE"
-            admin_val   = row[4].strip().upper() if len(row) > 4 else "FALSE"
-            owner_val   = row[5].strip().upper() if len(row) > 5 else "FALSE"
-            log_val     = row[7].strip().upper() if len(row) > 7 else "FALSE"
-            ai_val      = row[AI_ALLOWED_COL].strip().upper() if len(row) > AI_ALLOWED_COL else "FALSE"
+            admin_val = row[4].strip().upper() if len(row) > 4 else "FALSE"
+            owner_val = row[5].strip().upper() if len(row) > 5 else "FALSE"
+            log_val = row[7].strip().upper() if len(row) > 7 else "FALSE"
+            ai_val = row[AI_ALLOWED_COL].strip().upper() if len(row) > AI_ALLOWED_COL else "FALSE"
             if name == "الكل":
-                if allowed_val == "TRUE": open_all  = True
-                if admin_val   == "TRUE": admin_all = True
+                if allowed_val == "TRUE": open_all = True
+                if admin_val == "TRUE": admin_all = True
                 continue
             if not uid_str.isdigit(): continue
             uid = int(uid_str)
             if allowed_val == "TRUE": allowed.append(uid)
-            if admin_val   == "TRUE": admins.append(uid)
-            if owner_val   == "TRUE": owners.append(uid)
-            if log_val     == "TRUE": log_ids.append(uid)
-            if ai_val      == "TRUE": ai_allowed.append(uid)
+            if admin_val == "TRUE": admins.append(uid)
+            if owner_val == "TRUE": owners.append(uid)
+            if log_val == "TRUE": log_ids.append(uid)
+            if ai_val == "TRUE": ai_allowed.append(uid)
         return allowed, admins, owners, open_all, admin_all, log_ids, ai_allowed
     except Exception as e:
         log_error(f"get_users: {e}")
@@ -457,7 +462,8 @@ def get_all_user_ids():
 
 def get_all_registered_uids():
     try:
-        uids = []; es = 0
+        uids = []
+        es = 0
         for row in users_sheet.get_all_values()[1:]:
             if not row or not any(c.strip() for c in row):
                 es += 1
@@ -465,28 +471,31 @@ def get_all_registered_uids():
                 continue
             es = 0
             uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-            if uid_str.isdigit(): uids.append(int(uid_str))
+            if uid_str.isdigit():
+                uids.append(int(uid_str))
         return uids
-    except: return []
+    except:
+        return []
 
 def get_user_lang_from_sheet(uid):
     try:
         for row in users_sheet.get_all_values()[1:]:
-            if len(row) > 2 and row[2].strip().lstrip("'").isdigit() \
-               and int(row[2].strip().lstrip("'")) == uid:
+            if len(row) > 2 and row[2].strip().lstrip("'").isdigit() and int(row[2].strip().lstrip("'")) == uid:
                 return "en" if (row[6].strip().upper() if len(row) > 6 else "") == "TRUE" else "ar"
         return "ar"
-    except: return "ar"
+    except:
+        return "ar"
 
 def save_user_lang_to_sheet(uid, lang):
     try:
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if len(row) > 2 and row[2].strip().lstrip("'").isdigit() \
-               and int(row[2].strip().lstrip("'")) == uid:
-                users_sheet.update_cell(i, 7, lang == "en"); return True
+            if len(row) > 2 and row[2].strip().lstrip("'").isdigit() and int(row[2].strip().lstrip("'")) == uid:
+                users_sheet.update_cell(i, 7, lang == "en")
+                return True
         return False
-    except: return False
+    except:
+        return False
 
 def load_user_lang(uid):
     if uid not in user_lang:
@@ -498,7 +507,8 @@ def add_user_to_sheet(name, uid, auto=False, allowed=True):
         users_sheet.append_row([display, "", uid, allowed, False, False, False, False, False],
                                 value_input_option="USER_ENTERED")
         return True
-    except: return False
+    except:
+        return False
 
 def set_ai_allowed(uid, allowed):
     try:
@@ -506,7 +516,7 @@ def set_ai_allowed(uid, allowed):
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                users_sheet.update_cell(i, AI_ALLOWED_COL+1, allowed)
+                users_sheet.update_cell(i, AI_ALLOWED_COL + 1, allowed)
                 return True
         return False
     except Exception as e:
@@ -518,9 +528,11 @@ def find_user_row_by_id(search_id):
         sid = str(search_id).strip()
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows, start=1):
-            if len(row) > 2 and row[2].strip().lstrip("'") == sid: return i, row
+            if len(row) > 2 and row[2].strip().lstrip("'") == sid:
+                return i, row
         return None, None
-    except: return None, None
+    except:
+        return None, None
 
 def find_user_row_by_phone(phone):
     try:
@@ -528,9 +540,11 @@ def find_user_row_by_phone(phone):
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows, start=1):
             rp = re.sub(r'[\s\-\+]', '', row[1].strip() if len(row) > 1 else "")
-            if rp and rp == pc: return i, row
+            if rp and rp == pc:
+                return i, row
         return None, None
-    except: return None, None
+    except:
+        return None, None
 
 def get_personal_info(uid):
     try:
@@ -554,11 +568,15 @@ def _get_role_icon(uid):
         uid_str = str(uid)
         for row in users_sheet.get_all_values()[1:]:
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
-                if (row[5].strip().upper() if len(row) > 5 else "") == "TRUE": return "👑"
-                if (row[4].strip().upper() if len(row) > 4 else "") == "TRUE": return "⭐"
-                if (row[3].strip().upper() if len(row) > 3 else "") == "TRUE": return "👤"
+                if (row[5].strip().upper() if len(row) > 5 else "") == "TRUE":
+                    return "👑"
+                if (row[4].strip().upper() if len(row) > 4 else "") == "TRUE":
+                    return "⭐"
+                if (row[3].strip().upper() if len(row) > 3 else "") == "TRUE":
+                    return "👤"
                 return "❌"
-    except: pass
+    except:
+        pass
     return "👤"
 
 def _get_user_name_phone(uid):
@@ -567,7 +585,8 @@ def _get_user_name_phone(uid):
         for row in users_sheet.get_all_values()[1:]:
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 return row[0].strip(), (row[1].strip() if len(row) > 1 else "")
-    except: pass
+    except:
+        pass
     return str(uid), ""
 
 # ─────────────────────────────────────────────────────
@@ -581,20 +600,26 @@ def get_text(cell):
     return cell.split("|")[0].strip() if "|" in cell else cell.strip()
 
 def get_file_ids(cell):
-    if "|" not in cell: return []
+    if "|" not in cell:
+        return []
     part = cell.split("|", 1)[1].strip()
     return [f.strip() for f in part.split(",") if f.strip()] if part else []
 
 def parse_date(d):
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
-        try: return datetime.strptime(d.strip(), fmt).strftime("%d/%m/%Y")
-        except: continue
+        try:
+            return datetime.strptime(d.strip(), fmt).strftime("%d/%m/%Y")
+        except:
+            continue
     return d.strip()
 
 def is_valid_date(d):
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
-        try: datetime.strptime(d.strip(), fmt); return True
-        except: continue
+        try:
+            datetime.strptime(d.strip(), fmt)
+            return True
+        except:
+            continue
     return False
 
 def get_data():
@@ -604,60 +629,68 @@ def get_data():
             if any(len(r) > i and r[i].strip() for i in range(2, 8)):
                 useful.append(r)
         return useful
-    except: return []
+    except:
+        return []
 
 def save_lecture(date, subject, time_val, room):
     try:
         rows = sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date \
-               and safe_get(row, 1) == subject:
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
                 sheet.update_cell(i, 3, time_val)
-                sheet.update_cell(i, 4, room); return True
+                sheet.update_cell(i, 4, room)
+                return True
         new_row = [""] * 8
-        new_row[0] = date; new_row[1] = subject
-        new_row[2] = time_val; new_row[3] = room
-        sheet.append_row(new_row, value_input_option="USER_ENTERED"); return True
+        new_row[0] = date
+        new_row[1] = subject
+        new_row[2] = time_val
+        new_row[3] = room
+        sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        return True
     except Exception as e:
-        log_error(f"save_lecture: {e}"); return False
+        log_error(f"save_lecture: {e}")
+        return False
 
 def save_text_to_cell(date, subject, col, text_val):
     try:
         rows = sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date \
-               and safe_get(row, 1) == subject:
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
                 existing_fids = get_file_ids(safe_get(row, col))
-                sheet.update_cell(i, col + 1, text_val if not existing_fids else f"{text_val}|{','.join(existing_fids)}")
+                new_val = text_val if not existing_fids else f"{text_val}|{','.join(existing_fids)}"
+                sheet.update_cell(i, col + 1, new_val)
                 return True
         new_row = [""] * 8
-        new_row[0] = date; new_row[1] = subject; new_row[col] = text_val
-        sheet.append_row(new_row, value_input_option="USER_ENTERED"); return True
+        new_row[0] = date
+        new_row[1] = subject
+        new_row[col] = text_val
+        sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        return True
     except Exception as e:
-        log_error(f"save_text_to_cell: {e}"); return False
+        log_error(f"save_text_to_cell: {e}")
+        return False
 
 def delete_cell(date, subject, col):
     try:
         rows = sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date \
-               and safe_get(row, 1) == subject:
-                sheet.update_cell(i, col + 1, ""); return True
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
+                sheet.update_cell(i, col + 1, "")
+                return True
         return False
-    except: return False
+    except:
+        return False
 
 def get_data_summary_for_ai(uid, user_role):
     data = get_data()
     lines = []
 
-    # معلومات شخصية
     name, phone, role, ai_allowed = get_personal_info(uid)
     if name:
         lines.append(f"### معلومات المستخدم ###\nالاسم: {name}\nالهاتف: {phone or 'غير مسجل'}\nالرتبة: {role}\nصلاحية AI: {'مفعلة' if ai_allowed else 'معطلة'}\n")
     else:
         lines.append("### معلومات المستخدم ###\nلم يتم العثور على معلوماتك.\n")
 
-    # إحصائيات المستخدمين (للمالك فقط)
     if user_role == "owner":
         try:
             total_users = 0
@@ -693,7 +726,6 @@ def get_data_summary_for_ai(uid, user_role):
         except Exception as e:
             log_error(f"إحصائيات المستخدمين: {e}")
 
-    # بيانات المواد
     if not data:
         lines.append("لا توجد بيانات في قاعدة البيانات.")
         return "\n".join(lines)
@@ -705,13 +737,7 @@ def get_data_summary_for_ai(uid, user_role):
         if not subject:
             continue
         if subject not in subjects:
-            subjects[subject] = {
-                "lectures": [],
-                "tasks": [],
-                "summaries": [],
-                "alerts": [],
-                "price": None,
-            }
+            subjects[subject] = {"lectures": [], "tasks": [], "summaries": [], "alerts": [], "price": None}
         lect = safe_get(row, 2)
         if lect:
             subjects[subject]["lectures"].append((date, lect))
@@ -737,38 +763,46 @@ def get_data_summary_for_ai(uid, user_role):
         lines.append(f"\n**المادة: {subj}**")
         if details["price"]:
             lines.append(f"💰 السعر: {details['price']}")
-
         if details["lectures"]:
             lines.append("🕐 **المحاضرات** (التاريخ - الوقت):")
             for date, time_str in details["lectures"]:
                 lines.append(f"   • {date} : {time_str}")
-
         if details["tasks"]:
             lines.append("📝 **التكاليف** (التاريخ - النص):")
             for date, txt in details["tasks"]:
                 lines.append(f"   • {date} : {txt[:200]}")
-
         if details["summaries"]:
             lines.append("📖 **الملخصات** (التاريخ - النص):")
             for date, txt in details["summaries"]:
                 lines.append(f"   • {date} : {txt[:200]}")
-
         if details["alerts"]:
             lines.append("⚠️ **التنبيهات** (التاريخ - النص):")
             for date, txt in details["alerts"]:
                 lines.append(f"   • {date} : {txt[:200]}")
 
     lines.append(f"\n📚 المواد المتاحة: {', '.join(sorted(subjects.keys()))}")
+
+    if user_role in ("admin", "owner"):
+        lines.append("\n### الأوامر الإدارية المتاحة عبر المحادثة ###")
+        lines.append("- `أرسل إشعار [النص]` - إرسال إشعار لجميع المستخدمين")
+        lines.append("- `فعّل AI للمستخدم [ID]` - تفعيل الذكاء الاصطناعي لمستخدم")
+        lines.append("- `عطّل AI للمستخدم [ID]` - تعطيل الذكاء الاصطناعي لمستخدم")
+        lines.append("- `اجعل [ID] مالك/أدمن/مستخدم` - تغيير رتبة مستخدم")
+        lines.append("- `أضف مستخدم [الاسم] ID [ID]` - إضافة مستخدم جديد")
+        lines.append("- `أضف محاضرة [المادة] تاريخ [DD/MM/YYYY] وقت [HH:MM-HH:MM] قاعة [القاعة]`")
+        lines.append("- `أضف تكليف [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
+        lines.append("- `أضف ملخص [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
+        lines.append("- `أضف سعر [المادة] [السعر]`")
+        lines.append("- `احذف [محاضرة/تكليف/ملخص/تنبيه] [المادة] تاريخ [DD/MM/YYYY]`")
+
     return "\n".join(lines)
 
 def get_bot_code_summary(uid):
-    """توليد وصف ديناميكي للبوت بناءً على النصوص من الشيت"""
     lines = []
     lines.append("### معلومات عامة عن البوت ###")
     lines.append("- هذا بوت دراسي لإدارة المواد الجامعية والمحاضرات والتكاليف.")
     lines.append("- يدعم Google Sheets كقاعدة بيانات.")
     lines.append("- يدعم اللغة العربية والإنجليزية.")
-    lines.append("- يمكن للمستخدمين طلب رفع الملفات، والأدمن يمكنهم رفعها مباشرة.")
 
     lines.append("\n### الرتب والصلاحيات ###")
     lines.append("- **مستخدم عادي**: يمكنه عرض البيانات، طلب رفع ملف، استخدام المساعد الذكي (إذا فعّل المالك).")
@@ -783,14 +817,6 @@ def get_bot_code_summary(uid):
     ]
     for key in button_keys:
         lines.append(f"- **{bt(key, uid)}**: {_get_button_description(key)}")
-
-    lines.append("\n### الأوامر الإدارية النصية (للأدمن والمالك) ###")
-    lines.append("- `أضف محاضرة [المادة] تاريخ [DD/MM/YYYY] وقت [HH:MM-HH:MM] قاعة [القاعة]`")
-    lines.append("- `أضف تكليف [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
-    lines.append("- `أضف ملخص [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
-    lines.append("- `أضف سعر [المادة] [السعر]`")
-    lines.append("- `أضف تنبيه [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
-    lines.append("- `احذف [محاضرة/تكليف/ملخص/تنبيه] [المادة] تاريخ [DD/MM/YYYY]`")
 
     lines.append("\n### أوامر البوت ###")
     lines.append("- `/start` - بدء البوت وعرض القائمة")
@@ -846,13 +872,8 @@ def load_button_texts():
         "زر_اضافة_سعر", "زر_اضافة_تنبيه", "زر_تعديل_محاضره", "زر_تعديل_تكليف",
         "زر_تعديل_ملخص", "زر_تعديل_سعر", "زر_تعديل_تنبيه", "زر_تعديل_زرار", "زر_حذف_زرار"
     ]
-    # نضيف النصوص بجميع اللغات؟ نكتفي بالنص العربي لأن المستخدم قد يرسل الزر بالعربية
-    # ولكن يمكن إضافة النص الإنجليزي أيضاً
     for key in button_keys:
-        BUTTON_TEXTS.add(bt(key))  # سيأخذ حسب لغة المستخدم الافتراضية، لكن قد يكون مشكلة إذا غير اللغة
-        # لإضافة النص الإنجليزي: BUTTON_TEXTS.add(bt(key, uid=None)) لكننا نستخدم دالة bt بدون uid تعطي العربية افتراضياً
-        # بدلاً من ذلك، سنضيف النصوص من الشيت مباشرة
-    # إضافة الأزرار الثابتة
+        BUTTON_TEXTS.add(bt(key))
     BUTTON_TEXTS.update([
         "🤖 مساعد نايف", "🟢 🤖 مساعد نايف", "🔴 🤖 مساعد نايف",
         "📤 إرسال الآن", "✅ إرسال", "➕ إضافة محاضرة أخرى",
@@ -871,7 +892,8 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_الاسعار", uid), bt("زر_الملخصات", uid), bt("زر_التنبيهات", uid))
         m.row(bt("زر_اضافة", uid), bt("زر_تعديل", uid))
         m.row(bt("زر_اشعار", uid), bt("زر_رفع_ملف", uid), bt("زر_رفع_تعليمات", uid))
-        if owner: m.add(bt("زر_المستخدمين", uid))
+        if owner:
+            m.add(bt("زر_المستخدمين", uid))
     else:
         m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
         m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid), bt("زر_الملخصات", uid))
@@ -900,14 +922,16 @@ def back_with_noexist(uid):
 def subjects_menu_kb(uid):
     subjects = get_subjects()
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    for s in subjects: m.add(s)
+    for s in subjects:
+        m.add(s)
     m.add(bt("زر_عوده", uid))
     return m, subjects
 
 def subjects_with_noexist_kb(uid):
     subjects = get_subjects()
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    for s in subjects: m.add(s)
+    for s in subjects:
+        m.add(s)
     m.add("🚫 لا يوجد", bt("زر_عوده", uid))
     return m, subjects
 
@@ -920,7 +944,8 @@ def subject_options_menu(uid):
 
 def dates_menu_kb(dates, uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    for d in dates: m.add(d)
+    for d in dates:
+        m.add(d)
     m.add(bt("زر_عوده", uid))
     return m
 
@@ -933,15 +958,17 @@ def file_type_menu(uid):
 def add_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.row(bt("زر_اضافة_محاضره", uid), bt("زر_اضافة_تكليف", uid))
-    m.row(bt("زر_اضافة_ملخص", uid),   bt("زر_اضافة_سعر", uid))
-    m.add(bt("زر_اضافة_تنبيه", uid)); m.add(bt("زر_عوده", uid))
+    m.row(bt("زر_اضافة_ملخص", uid), bt("زر_اضافة_سعر", uid))
+    m.add(bt("زر_اضافة_تنبيه", uid))
+    m.add(bt("زر_عوده", uid))
     return m
 
 def edit_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.row(bt("زر_تعديل_محاضره", uid), bt("زر_تعديل_تكليف", uid))
-    m.row(bt("زر_تعديل_ملخص", uid),   bt("زر_تعديل_سعر", uid))
-    m.add(bt("زر_تعديل_تنبيه", uid)); m.add(bt("زر_عوده", uid))
+    m.row(bt("زر_تعديل_ملخص", uid), bt("زر_تعديل_سعر", uid))
+    m.add(bt("زر_تعديل_تنبيه", uid))
+    m.add(bt("زر_عوده", uid))
     return m
 
 def edit_action_menu(uid):
@@ -952,13 +979,15 @@ def edit_action_menu(uid):
 
 def buildings_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add("🏛 القديم", "🏫 الاداب"); m.add(bt("زر_عوده", uid))
+    m.add("🏛 القديم", "🏫 الاداب")
+    m.add(bt("زر_عوده", uid))
     return m
 
 def rooms_menu_kb(building, uid):
     rooms = get_rooms(building)
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    for r in rooms: m.add(r)
+    for r in rooms:
+        m.add(r)
     m.add(bt("زر_عوده", uid))
     return m, rooms
 
@@ -990,7 +1019,8 @@ def date_type_menu(uid):
 
 def help_audience_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add("👤 للمستخدمين", "👑 للأدمن"); m.add(bt("زر_عوده", uid))
+    m.add("👤 للمستخدمين", "👑 للأدمن")
+    m.add(bt("زر_عوده", uid))
     return m
 
 def help_view_menu(uid):
@@ -1009,24 +1039,27 @@ def upload_confirm_menu(uid):
     m.row("✅ إرسال", bt("زر_عوده", uid))
     return m
 
-# دوال أخرى
 def get_subjects():
     try:
         seen, result = set(), []
         for row in sheet.get_all_values()[1:]:
             s = row[1].strip() if len(row) > 1 else ""
             if s and s not in seen:
-                seen.add(s); result.append(s)
+                seen.add(s)
+                result.append(s)
         return result
     except Exception as e:
-        log_error(f"get_subjects: {e}"); return []
+        log_error(f"get_subjects: {e}")
+        return []
 
 def get_rooms(building):
     try:
-        if not rooms_sheet: return []
+        if not rooms_sheet:
+            return []
         return [r[1].strip() for r in rooms_sheet.get_all_values()
                 if len(r) > 1 and r[0].strip() == building and r[1].strip()]
-    except: return []
+    except:
+        return []
 
 def send_date_suggestions(chat_id, subject=None, for_lecture=False, for_alert=False, uid=None):
     now = datetime.now(YEMEN_TZ)
@@ -1036,8 +1069,7 @@ def send_date_suggestions(chat_id, subject=None, for_lecture=False, for_alert=Fa
         lines = [f"`{tmrw}`", f"`{today}`"]
     else:
         lines = [f"`{today}`"]
-        # يمكن إضافة تواريخ سابقة من آخر المحاضرات
-        lines = lines[:4]
+    lines = lines[:4]
     msg = "📅 تواريخ مقترحة (اضغط للنسخ):\n\n" + "\n".join(lines)
     bot.send_message(chat_id, msg, parse_mode="Markdown")
 
@@ -1045,14 +1077,120 @@ def get_settings():
     return bt("رسالة_الترحيب"), bt("رسالة_الرفض")
 
 # ─────────────────────────────────────────────────────
-# دوال الأوامر الإدارية النصية
+# دوال الأوامر الإدارية النصية (محدثة)
 # ─────────────────────────────────────────────────────
-def try_execute_admin_command(text, uid, user_role, chat_id):
+def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
     if user_role not in ("admin", "owner"):
         return False, None
-    text = text.strip()
 
-    # إضافة محاضرة
+    text = text.strip()
+    executed = False
+    response = None
+
+    # ========== إرسال إشعار لجميع المستخدمين ==========
+    pattern_broadcast = r'(?:أرسل|إرسال)\s*إشعار\s*(.+)'
+    m = re.search(pattern_broadcast, text, re.IGNORECASE)
+    if m:
+        broadcast_text = m.group(1).strip()
+        if broadcast_text:
+            uids, open_all = get_all_user_ids()
+            if open_all:
+                registered = get_all_registered_uids()
+                if registered:
+                    uids = registered
+            if not uids:
+                return True, "⚠️ لا يوجد مستخدمون لإرسال الإشعار لهم."
+            success = 0
+            fail = 0
+            for user_id in uids:
+                try:
+                    bot_instance.send_message(user_id, f"📢 *إشعار:*\n\n{broadcast_text}", parse_mode="Markdown")
+                    success += 1
+                except:
+                    fail += 1
+            return True, f"✅ تم إرسال الإشعار!\n✅ {success} | ❌ {fail}"
+        else:
+            return False, "❌ يجب إدخال نص الإشعار. مثال: أرسل إشعار سيتم تعطيل البوت غداً"
+
+    # ========== إضافة مستخدم جديد ==========
+    pattern_add_user = r'(?:أضف|إضافة)\s*مستخدم\s*(.+?)(?:\s+ID\s*(\d+)|(?:\s+بالرقم\s*(\d+)))?$'
+    m = re.search(pattern_add_user, text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip()
+        uid_str = m.group(2) or m.group(3)
+        if uid_str and uid_str.isdigit():
+            new_uid = int(uid_str)
+            _, row = find_user_row_by_id(new_uid)
+            if row:
+                return True, f"⚠️ المستخدم {new_uid} موجود بالفعل."
+            if add_user_to_sheet(name, new_uid, auto=False, allowed=True):
+                return True, f"✅ تم إضافة المستخدم {name} (ID: {new_uid}) بنجاح."
+            else:
+                return True, "❌ حدث خطأ أثناء إضافة المستخدم."
+        else:
+            return False, "❌ يجب إدخال ID صحيح. مثال: أضف مستخدم أحمد 123456789"
+
+    # ========== تغيير صلاحية مستخدم (تفعيل/تعطيل AI) ==========
+    pattern_toggle_ai = r'(?:فعّل|عطّل|تفعيل|تعطيل)\s*AI\s*(?:للمستخدم)?\s*(\d+)'
+    m = re.search(pattern_toggle_ai, text, re.IGNORECASE)
+    if m:
+        target_uid = int(m.group(1))
+        is_enable = "فعّل" in text or "تفعيل" in text
+        if set_ai_allowed(target_uid, is_enable):
+            name, _ = _get_user_name_phone(target_uid)
+            status = "مفعل" if is_enable else "معطل"
+            try:
+                msg = bt("رسالة_ai_تفعيل", target_uid) if is_enable else bt("رسالة_ai_تعطيل", target_uid)
+                bot_instance.send_message(target_uid, msg)
+            except:
+                pass
+            return True, f"✅ تم {status} AI للمستخدم {name} (ID: {target_uid})"
+        else:
+            return True, f"❌ فشل تغيير صلاحية AI للمستخدم {target_uid}"
+
+    # ========== تغيير رتبة مستخدم ==========
+    pattern_change_role = r'(?:اجعل|حول|غير)\s*(?:المستخدم)?\s*(\d+|.+?)\s*(مالك|أدمن|مستخدم)'
+    m = re.search(pattern_change_role, text, re.IGNORECASE)
+    if m:
+        identifier = m.group(1).strip()
+        target_role = m.group(2).strip()
+        if identifier.isdigit():
+            target_uid = int(identifier)
+        else:
+            _, row = find_user_row_by_phone(identifier)
+            if not row:
+                _, row = find_user_row_by_id(identifier)
+            if row:
+                target_uid = int(row[2].strip().lstrip("'"))
+            else:
+                return False, f"❌ لم أجد مستخدم باسم '{identifier}'"
+
+        try:
+            rows = users_sheet.get_all_values()
+            for i, row in enumerate(rows[1:], start=2):
+                if len(row) > 2 and row[2].strip().lstrip("'") == str(target_uid):
+                    if target_role == "مالك":
+                        users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
+                        role_name = "مالك"
+                    elif target_role == "أدمن":
+                        users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
+                        role_name = "أدمن"
+                    else:
+                        users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                        role_name = "مستخدم"
+                    name, phone = _get_user_name_phone(target_uid)
+                    notify_owners_action(target_uid, name, phone, f"أمر من {uid}", f"set_{role_name}")
+                    try:
+                        bot_instance.send_message(target_uid, f"✅ تم تغيير رتبتك إلى {role_name}")
+                    except:
+                        pass
+                    return True, f"✅ تم تغيير رتبة المستخدم {name} إلى {role_name}"
+            return True, f"❌ لم أجد المستخدم {target_uid}"
+        except Exception as e:
+            log_error(f"change_role: {e}")
+            return True, "❌ حدث خطأ أثناء تغيير الرتبة"
+
+    # ========== إضافة محاضرة ==========
     pattern_add_lecture = r'(?:أضف|إضافة)\s*محاضرة\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:وقت\s*)?(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})\s*(?:قاعة\s*)?(.+)'
     m = re.search(pattern_add_lecture, text, re.IGNORECASE)
     if m:
@@ -1067,7 +1205,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id):
         else:
             return False, "❌ حدث خطأ أثناء الإضافة."
 
-    # إضافة تكليف
+    # ========== إضافة تكليف ==========
     pattern_add_task = r'(?:أضف|إضافة)\s*(?:تكليف|واجب)\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_add_task, text, re.IGNORECASE)
     if m:
@@ -1081,7 +1219,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id):
         else:
             return False, "❌ خطأ في الحفظ."
 
-    # إضافة ملخص
+    # ========== إضافة ملخص ==========
     pattern_add_summary = r'(?:أضف|إضافة)\s*ملخص\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_add_summary, text, re.IGNORECASE)
     if m:
@@ -1095,7 +1233,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id):
         else:
             return False, "❌ خطأ في الحفظ."
 
-    # إضافة سعر
+    # ========== إضافة سعر ==========
     pattern_add_price = r'(?:أضف|إضافة)\s*سعر\s*(?:مادة\s*)?([^\s]+)\s*(?:سعر\s*)?(.+)'
     m = re.search(pattern_add_price, text, re.IGNORECASE)
     if m:
@@ -1112,7 +1250,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id):
             sheet.append_row(["", subject, "", "", "", price, "", ""], value_input_option="USER_ENTERED")
         return True, f"✅ تم تحديث سعر مادة {subject} إلى {price}"
 
-    # حذف عنصر
+    # ========== حذف عنصر ==========
     pattern_delete = r'(?:احذف|حذف)\s*(محاضرة|تكليف|ملخص|تنبيه)\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})'
     m = re.search(pattern_delete, text, re.IGNORECASE)
     if m:
@@ -1129,7 +1267,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id):
         else:
             return False, "النوع غير معروف."
 
-    # إضافة تنبيه
+    # ========== إضافة تنبيه ==========
     pattern_add_alert = r'(?:أضف|إضافة)\s*تنبيه\s*(?:مادة\s*)?([^\s]+)\s*(?:تاريخ\s*)?(\d{1,2}/\d{1,2}/\d{4})\s*(?:نص\s*)?(.+)'
     m = re.search(pattern_add_alert, text, re.IGNORECASE)
     if m:
@@ -1155,7 +1293,8 @@ def _try_send_file(chat_id, fid, caption=None, parse_mode=None, reply_markup=Non
             sender(chat_id, fid, caption=caption, parse_mode=parse_mode,
                    reply_markup=reply_markup)
             return True
-        except: continue
+        except:
+            continue
     return False
 
 def send_files_with_text(chat_id, text, fids, reply_markup=None):
@@ -1238,7 +1377,8 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
         try:
             sent = bot.send_message(oid, msg, parse_mode="Markdown", reply_markup=markup)
             request_msg_ids[requester_id][oid] = sent.message_id
-        except: pass
+        except:
+            pass
 
 def notify_owners_action(target_id, target_name, phone, actor, action):
     EVENT = {
@@ -1270,11 +1410,15 @@ def notify_owners_action(target_id, target_name, phone, actor, action):
         for oid in owners:
             mid = msg_ids.get(oid)
             if mid:
-                try: bot.delete_message(oid, mid)
-                except: pass
+                try:
+                    bot.delete_message(oid, mid)
+                except:
+                    pass
     for oid in owners:
-        try: bot.send_message(oid, msg, parse_mode="Markdown")
-        except: pass
+        try:
+            bot.send_message(oid, msg, parse_mode="Markdown")
+        except:
+            pass
 
 # ─────────────────────────────────────────────────────
 # دوال عرض النتائج
@@ -1290,11 +1434,14 @@ def send_search_results(chat_id, uid, date_filter, subjects_filter, types_filter
 
     def match_date(r):
         rd = safe_get(r, 0)
-        if not rd: return False
+        if not rd:
+            return False
         try:
             pd = parse_date(rd)
-        except: return False
-        if is_range: return dates_in_range(pd, d1, d2)
+        except:
+            return False
+        if is_range:
+            return dates_in_range(pd, d1, d2)
         return pd == date_filter
 
     filtered = [r for r in data if match_date(r) and safe_get(r, 1) in subjects_filter]
@@ -1310,26 +1457,33 @@ def send_search_results(chat_id, uid, date_filter, subjects_filter, types_filter
         )
         for d in all_dates:
             rows_d = [r for r in filtered if safe_get(r, 0) and parse_date(safe_get(r, 0)) == d]
-            if not rows_d: continue
+            if not rows_d:
+                continue
             day = get_day_name(d, uid)
             d_ar = format_date_ar(d)
-            msg = f"📅 *{d_ar} — {day}*\n{'━'*20}\n"
-            fids_all = []; has_content = False
+            msg = f"📅 *{d_ar} — {day}*\n{'━' * 20}\n"
+            fids_all = []
+            has_content = False
             for row in rows_d:
                 subj = safe_get(row, 1)
                 parts = []
                 if "محاضرات" in types_filter:
                     t = safe_get(row, 2)
-                    if t: parts.append(f"🕐 {t}")
+                    if t:
+                        parts.append(f"🕐 {t}")
                 if "تكاليف" in types_filter:
                     cell = safe_get(row, 4)
-                    tx = get_text(cell); fi = get_file_ids(cell)
-                    if tx: parts.append(f"📝 {tx}")
+                    tx = get_text(cell)
+                    fi = get_file_ids(cell)
+                    if tx:
+                        parts.append(f"📝 {tx}")
                     fids_all.extend(fi)
                 if "ملخصات" in types_filter:
                     cell = safe_get(row, 6)
-                    tx = get_text(cell); fi = get_file_ids(cell)
-                    if tx: parts.append(f"📖 {tx}")
+                    tx = get_text(cell)
+                    fi = get_file_ids(cell)
+                    if tx:
+                        parts.append(f"📖 {tx}")
                     fids_all.extend(fi)
                 if parts:
                     msg += f"\n📌 *{subj}*\n" + "\n".join(parts) + "\n"
@@ -1343,9 +1497,11 @@ def send_search_results(chat_id, uid, date_filter, subjects_filter, types_filter
                 [r for r in filtered if safe_get(r, 1) == subj],
                 key=lambda r: datetime.strptime(parse_date(safe_get(r, 0)), "%d/%m/%Y") if safe_get(r, 0) else datetime.min
             )
-            if not rows_s: continue
-            msg = f"📌 *{subj}*\n{'━'*20}\n"
-            fids_all = []; has_content = False
+            if not rows_s:
+                continue
+            msg = f"📌 *{subj}*\n{'━' * 20}\n"
+            fids_all = []
+            has_content = False
             for row in rows_s:
                 d = parse_date(safe_get(row, 0))
                 day = get_day_name(d, uid)
@@ -1353,16 +1509,21 @@ def send_search_results(chat_id, uid, date_filter, subjects_filter, types_filter
                 parts = [f"📅 {d_ar} — {day}"]
                 if "محاضرات" in types_filter:
                     t = safe_get(row, 2)
-                    if t: parts.append(f"🕐 {t}")
+                    if t:
+                        parts.append(f"🕐 {t}")
                 if "تكاليف" in types_filter:
                     cell = safe_get(row, 4)
-                    tx = get_text(cell); fi = get_file_ids(cell)
-                    if tx: parts.append(f"📝 {tx}")
+                    tx = get_text(cell)
+                    fi = get_file_ids(cell)
+                    if tx:
+                        parts.append(f"📝 {tx}")
                     fids_all.extend(fi)
                 if "ملخصات" in types_filter:
                     cell = safe_get(row, 6)
-                    tx = get_text(cell); fi = get_file_ids(cell)
-                    if tx: parts.append(f"📖 {tx}")
+                    tx = get_text(cell)
+                    fi = get_file_ids(cell)
+                    if tx:
+                        parts.append(f"📖 {tx}")
                     fids_all.extend(fi)
                 if len(parts) > 1:
                     msg += "\n".join(parts) + "\n─\n"
@@ -1378,64 +1539,63 @@ def get_day_name(date_str, uid=None):
     try:
         dt = datetime.strptime(date_str, "%d/%m/%Y")
         return DAYS_EN[dt.weekday()] if uid and user_lang.get(uid, "ar") == "en" else DAYS_AR[dt.weekday()]
-    except: return ""
+    except:
+        return ""
 
 def format_date_ar(date_str):
     try:
         dt = datetime.strptime(date_str, "%d/%m/%Y")
         return f"{dt.day} {MONTHS_AR[dt.month]}"
-    except: return date_str
+    except:
+        return date_str
 
 def dates_in_range(date_str, d1, d2):
     try:
         dt = datetime.strptime(date_str, "%d/%m/%Y")
         dt1 = datetime.strptime(d1, "%d/%m/%Y")
         dt2 = datetime.strptime(d2, "%d/%m/%Y")
-        if dt1 > dt2: dt1, dt2 = dt2, dt1
+        if dt1 > dt2:
+            dt1, dt2 = dt2, dt1
         return dt1 <= dt <= dt2
-    except: return False
+    except:
+        return False
 
 def get_last_date(data, col):
     dates = []
     for r in data:
         d = safe_get(r, 0)
         if d and (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col))):
-            try: dates.append(parse_date(d))
-            except: pass
+            try:
+                dates.append(parse_date(d))
+            except:
+                pass
     return sorted(dates, key=lambda x: datetime.strptime(x, "%d/%m/%Y"))[-1] if dates else None
 
-def get_last_lectures_for_subject(subject, n=3):
-    try:
-        seen, dates = set(), []
-        for r in get_data():
-            s = safe_get(r, 1); d = safe_get(r, 0); t = safe_get(r, 2)
-            if s == subject and d and t:
-                p = parse_date(d)
-                if p not in seen: seen.add(p); dates.append(p)
-        dates.sort(key=lambda x: datetime.strptime(x, "%d/%m/%Y"), reverse=True)
-        return dates[:n]
-    except: return []
+DAYS_AR = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
+DAYS_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
+MONTHS_AR = {1: "يناير", 2: "فبراير", 3: "مارس", 4: "أبريل", 5: "مايو", 6: "يونيو",
+             7: "يوليو", 8: "أغسطس", 9: "سبتمبر", 10: "أكتوبر", 11: "نوفمبر", 12: "ديسمبر"}
 
-DAYS_AR = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
-DAYS_EN = {0:"Monday",1:"Tuesday",2:"Wednesday",3:"Thursday",4:"Friday",5:"Saturday",6:"Sunday"}
-MONTHS_AR = {1:"يناير",2:"فبراير",3:"مارس",4:"أبريل",5:"مايو",6:"يونيو",
-             7:"يوليو",8:"أغسطس",9:"سبتمبر",10:"أكتوبر",11:"نوفمبر",12:"ديسمبر"}
-
+# ─────────────────────────────────────────────────────
+# دوال مراقبة التغييرات
+# ─────────────────────────────────────────────────────
 def _snapshot_users():
     snap = {}
     try:
         for row in users_sheet.get_all_values()[1:]:
             uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-            if not uid_str.isdigit(): continue
+            if not uid_str.isdigit():
+                continue
             snap[uid_str] = {
                 "allowed": (row[3].strip().upper() if len(row) > 3 else "FALSE") == "TRUE",
-                "admin":   (row[4].strip().upper() if len(row) > 4 else "FALSE") == "TRUE",
-                "owner":   (row[5].strip().upper() if len(row) > 5 else "FALSE") == "TRUE",
-                "ai":      (row[AI_ALLOWED_COL].strip().upper() if len(row) > AI_ALLOWED_COL else "FALSE") == "TRUE",
-                "name":    row[0].strip(),
-                "phone":   row[1].strip() if len(row) > 1 else "",
+                "admin": (row[4].strip().upper() if len(row) > 4 else "FALSE") == "TRUE",
+                "owner": (row[5].strip().upper() if len(row) > 5 else "FALSE") == "TRUE",
+                "ai": (row[AI_ALLOWED_COL].strip().upper() if len(row) > AI_ALLOWED_COL else "FALSE") == "TRUE",
+                "name": row[0].strip(),
+                "phone": row[1].strip() if len(row) > 1 else "",
             }
-    except: pass
+    except:
+        pass
     return snap
 
 def _watch_sheet_loop():
@@ -1447,48 +1607,69 @@ def _watch_sheet_loop():
             new_snap = _snapshot_users()
             for uid_str, new in new_snap.items():
                 old = _users_snapshot.get(uid_str)
-                if not old: continue
+                if not old:
+                    continue
                 uid = int(uid_str)
-                name = new["name"]; phone = new["phone"]
+                name = new["name"]
+                phone = new["phone"]
                 if new["owner"] and not old["owner"]:
-                    try: bot.send_message(uid, "👑 تمت ترقيتك إلى مالك!")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "👑 تمت ترقيتك إلى مالك!")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "set_owner")
                 elif new["admin"] and not old["admin"]:
-                    try: bot.send_message(uid, "⭐ تمت ترقيتك إلى أدمن!")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "⭐ تمت ترقيتك إلى أدمن!")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "set_admin")
                 elif new["allowed"] and not old["allowed"]:
-                    try: bot.send_message(uid, bt("رسالة_موافقة", uid))
-                    except: pass
+                    try:
+                        bot.send_message(uid, bt("رسالة_موافقة", uid))
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "approve")
                     log_info(f"موافقة من الشيت على {name}", uid)
                 elif new["ai"] and not old["ai"]:
-                    try: bot.send_message(uid, bt("رسالة_ai_تفعيل", uid))
-                    except: pass
+                    try:
+                        bot.send_message(uid, bt("رسالة_ai_تفعيل", uid))
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "ai_enabled")
                 elif not new["ai"] and old["ai"]:
-                    try: bot.send_message(uid, bt("رسالة_ai_تعطيل", uid))
-                    except: pass
+                    try:
+                        bot.send_message(uid, bt("رسالة_ai_تعطيل", uid))
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "ai_disabled")
                 elif old["owner"] and not new["owner"] and new["admin"]:
-                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى أدمن.")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى أدمن.")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "downgrade_owner")
                 elif old["owner"] and not new["owner"] and new["allowed"] and not new["admin"]:
-                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "downgrade_owner_to_user")
                 elif old["admin"] and not new["admin"] and new["allowed"] and not old["owner"]:
-                    try: bot.send_message(uid, "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "downgrade_admin")
                 elif not new["allowed"] and old["allowed"]:
-                    try: bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.")
-                    except: pass
+                    try:
+                        bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.")
+                    except:
+                        pass
                     notify_owners_action(uid, name, phone, "الشيت", "remove")
             _users_snapshot = new_snap
-        except: pass
+        except:
+            pass
 
 # ─────────────────────────────────────────────────────
 # دوال بطاقة المستخدم وعرض جميع المستخدمين
@@ -1515,7 +1696,7 @@ def send_user_card(chat_id, row):
         role = "غير مصرح"
     ai_icon = "🤖" if ai_val == "TRUE" else "🚫"
     ph_line = f"\n📞 `{phone}`" if phone else ""
-    text = f"{role_icon} *{name}*\n🆔 `{uid_str}`{ph_line}\n{ai_icon} AI: {'مفعل' if ai_val=='TRUE' else 'معطل'}\n{'─'*23}"
+    text = f"{role_icon} *{name}*\n🆔 `{uid_str}`{ph_line}\n{ai_icon} AI: {'مفعل' if ai_val == 'TRUE' else 'معطل'}\n{'─' * 23}"
     markup = telebot.types.InlineKeyboardMarkup(row_width=3)
     markup.row(
         telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"role_owner_{uid_str}"),
@@ -1575,7 +1756,8 @@ def _execute_search(chat_id, uid):
     user_state.pop(uid, None)
     welcome, _ = get_settings()
     allowed, admins, owners, open_all, admin_all, _, _ = get_users()
-    adm = admin_all or uid in admins; own = uid in owners
+    adm = admin_all or uid in admins
+    own = uid in owners
     send_search_results(chat_id, uid, df, subjs, types_f, display_mode)
     bot.send_message(chat_id, welcome, reply_markup=main_menu(uid, admin=adm, owner=own))
 
@@ -1584,13 +1766,17 @@ def _execute_search(chat_id, uid):
 # ─────────────────────────────────────────────────────
 def auto_register_user(message, open_all=None):
     try:
-        if open_all is None: _, _, _, open_all, _, _, _ = get_users()
-        if not open_all: return
+        if open_all is None:
+            _, _, _, open_all, _, _, _ = get_users()
+        if not open_all:
+            return
         uid_str = str(message.from_user.id)
         for row in users_sheet.get_all_values()[1:]:
-            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str: return
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                return
         add_user_to_sheet(message.from_user.full_name or "مجهول", message.from_user.id, auto=True, allowed=False)
-    except: pass
+    except:
+        pass
 
 def calc_secret_code(uid):
     day = datetime.now(YEMEN_TZ).day
@@ -1601,10 +1787,13 @@ def _do_broadcast(chat_id, uid, admin, owner, text_msg, files_data):
     uids, open_all = get_all_user_ids()
     if open_all:
         registered = get_all_registered_uids()
-        if registered: uids = registered
+        if registered:
+            uids = registered
     if not uids:
-        bot.send_message(chat_id, "⚠️ لا يوجد مستخدمون."); return
-    success = fail = 0
+        bot.send_message(chat_id, "⚠️ لا يوجد مستخدمون.")
+        return
+    success = 0
+    fail = 0
     for user_id in uids:
         try:
             if text_msg:
@@ -1612,14 +1801,16 @@ def _do_broadcast(chat_id, uid, admin, owner, text_msg, files_data):
             for fd in (files_data or []):
                 _try_send_file(user_id, fd["file_id"])
             success += 1
-        except: fail += 1
+        except:
+            fail += 1
     bot.send_message(chat_id, f"✅ تم الإرسال!\n✅ {success} | ❌ {fail}", reply_markup=main_menu(uid, admin=admin, owner=owner))
 
 def send_help_materials(chat_id, uid, audience_filter):
     mats = get_help_materials()
     mats = [m for m in mats if m["audience"] == audience_filter]
     if not mats:
-        bot.send_message(chat_id, "📭 لا توجد تعليمات حالياً."); return
+        bot.send_message(chat_id, "📭 لا توجد تعليمات حالياً.")
+        return
     title = ("📖 تعليمات المستخدم" if audience_filter == "user" else "📖 تعليمات الأدمن")
     bot.send_message(chat_id, f"*{title}*", parse_mode="Markdown")
     for m in mats:
@@ -1629,14 +1820,17 @@ def get_help_materials():
     try:
         mats = []
         for row in help_sheet.get_all_values():
-            if not row or not any(r.strip() for r in row): continue
+            if not row or not any(r.strip() for r in row):
+                continue
             fid = row[1].strip() if len(row) > 1 else ""
             ftype = row[2].strip() if len(row) > 2 else ""
             aud = row[3].strip() if len(row) > 3 else "user"
             note = row[4].strip() if len(row) > 4 else ""
-            if fid or note: mats.append({"file_id": fid, "file_type": ftype, "audience": aud, "note": note})
+            if fid or note:
+                mats.append({"file_id": fid, "file_type": ftype, "audience": aud, "note": note})
         return mats
-    except: return []
+    except:
+        return []
 
 def save_help_material(files_data, audience, note=""):
     try:
@@ -1650,13 +1844,12 @@ def save_help_material(files_data, audience, note=""):
             nrow += 1
         return True
     except Exception as e:
-        log_error(f"save_help_material: {e}"); return False
+        log_error(f"save_help_material: {e}")
+        return False
 
-# ─────────────────────────────────────────────────────
-# دوال معالجة المحاضرات
-# ─────────────────────────────────────────────────────
 def _process_lecture_time(chat_id, uid, state, time_val, admin, owner):
-    subj = state.get("subject", ""); date = state.get("date", "")
+    subj = state.get("subject", "")
+    date = state.get("date", "")
     room = state.get("room", "")
     if time_val == "لا يوجد":
         if save_lecture(date, subj, time_val, room):
@@ -1675,10 +1868,10 @@ def _process_lecture_time(chat_id, uid, state, time_val, admin, owner):
         mk2 = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
         mk2.row("🔄 استبدال", bt("زر_عوده", uid))
         bot.send_message(chat_id,
-            f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n"
-            f"🕐 {conflict['time']}\n📍 {conflict['room']}\n\n"
-            f"الوقت `{time_val}` يتداخل معها.\nماذا تريد؟",
-            parse_mode="Markdown", reply_markup=mk2)
+                         f"⚠️ تداخل في الوقت!\n\n📌 {conflict['subject']}\n"
+                         f"🕐 {conflict['time']}\n📍 {conflict['room']}\n\n"
+                         f"الوقت `{time_val}` يتداخل معها.\nماذا تريد؟",
+                         parse_mode="Markdown", reply_markup=mk2)
     else:
         if save_lecture(date, subj, time_val, room):
             mk3 = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -1686,8 +1879,8 @@ def _process_lecture_time(chat_id, uid, state, time_val, admin, owner):
             user_state[uid]["step"] = "lecture_done"
             user_state[uid]["time_val"] = time_val
             bot.send_message(chat_id,
-                f"✅ تم حفظ المحاضرة!\n📌 {subj}\n📅 {date}\n🕐 {time_val}\n📍 {room}",
-                reply_markup=mk3)
+                             f"✅ تم حفظ المحاضرة!\n📌 {subj}\n📅 {date}\n🕐 {time_val}\n📍 {room}",
+                             reply_markup=mk3)
         else:
             bot.send_message(chat_id, bt("رسالة_خطأ", uid))
             user_state.pop(uid, None)
@@ -1695,46 +1888,58 @@ def _process_lecture_time(chat_id, uid, state, time_val, admin, owner):
 def check_lecture_conflict(date, time_val):
     try:
         ns, ne = parse_time_range(time_val)
-        if ns is None: return None
+        if ns is None:
+            return None
         for row in get_data():
             rd = parse_date(safe_get(row, 0))
             rt = safe_get(row, 2)
-            if rd != date or not rt: continue
+            if rd != date or not rt:
+                continue
             es2, ee2 = parse_time_range(rt)
-            if es2 is None: continue
+            if es2 is None:
+                continue
             if ns < ee2 and es2 < ne:
                 return {"subject": safe_get(row, 1),
-                        "room":    safe_get(row, 3),
-                        "time":    normalize_time(rt)}
-    except: pass
+                        "room": safe_get(row, 3),
+                        "time": normalize_time(rt)}
+    except:
+        pass
     return None
 
 def normalize_time(t):
     t = t.strip().replace("–", "-").replace("—", "-")
     t = re.sub(r'\s*-\s*', ' - ', t)
-    def pad(m): return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    def pad(m):
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+
     return re.sub(r'(\d{1,2}):(\d{2})', pad, t)
 
 def parse_time_range(t):
     t = normalize_time(t)
     parts = re.split(r'\s*-\s*', t)
-    if len(parts) != 2: return None, None
+    if len(parts) != 2:
+        return None, None
+
     def mins(s):
         s = s.strip()
         h, mm = s.split(":") if ":" in s else (s, "0")
         return int(h) * 60 + int(mm)
-    try: return mins(parts[0]), mins(parts[1])
-    except: return None, None
 
-# ─────────────────────────────────────────────────────
-# دوال البحث
-# ─────────────────────────────────────────────────────
+    try:
+        return mins(parts[0]), mins(parts[1])
+    except:
+        return None, None
+
 def build_multiselect_kb(items, selected, prefix):
-    keyboard = []; row = []
+    keyboard = []
+    row = []
     for label, value in items:
         lbl = f"✅ {label}" if value in selected else label
         row.append(telebot.types.InlineKeyboardButton(lbl, callback_data=f"{prefix}:{value}"))
-        if len(row) == 2: keyboard.append(row); row = []
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
     all_lbl = f"✅ {bt('زر_تحديد_الكل')}" if "__all__" in selected else bt("زر_تحديد_الكل")
     done_lbl = bt("زر_تم_التحديد")
     if row:
@@ -1747,6 +1952,91 @@ def build_multiselect_kb(items, selected, prefix):
             telebot.types.InlineKeyboardButton(done_lbl, callback_data=f"{prefix}:__done__"),
         ])
     return telebot.types.InlineKeyboardMarkup(keyboard)
+
+def parse_smart_date(raw):
+    text = normalize_digits(raw.strip())
+    if is_valid_date(text):
+        return parse_date(text)
+    if text.isdigit():
+        d = int(text)
+        if 1 <= d <= 31:
+            return smart_date_from_day(d)
+    return None
+
+def smart_date_from_day(day):
+    now = datetime.now(YEMEN_TZ)
+    if day <= now.day:
+        try:
+            return now.replace(day=day).strftime("%d/%m/%Y")
+        except:
+            return now.strftime("%d/%m/%Y")
+    else:
+        first = now.replace(day=1)
+        last_m = first - timedelta(days=1)
+        try:
+            return last_m.replace(day=day).strftime("%d/%m/%Y")
+        except:
+            return now.strftime("%d/%m/%Y")
+
+def parse_date_range(raw):
+    text = normalize_digits(raw.strip())
+    m = re.match(r'(\d{1,2}/\d{1,2}/\d{4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{4})', text)
+    if m and is_valid_date(m.group(1)) and is_valid_date(m.group(2)):
+        return parse_date(m.group(1)), parse_date(m.group(2))
+    m2 = re.match(r'^(\d{1,2})[-–](\d{1,2})$', text)
+    if m2:
+        return smart_date_from_day(int(m2.group(1))), smart_date_from_day(int(m2.group(2)))
+    return None, None
+
+def save_file_to_cell(date, subject, col, fids, merge=False):
+    try:
+        fids = fids if isinstance(fids, list) else [fids]
+        rows = sheet.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
+                current = safe_get(row, col)
+                all_fids = (get_file_ids(current) + fids) if merge else fids
+                sheet.update_cell(i, col + 1, merge_cell(get_text(current), all_fids))
+                return True
+        new_row = [""] * 8
+        new_row[0] = date
+        new_row[1] = subject
+        new_row[col] = f"|{','.join(fids)}"
+        sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        log_error(f"save_file_to_cell: {e}")
+        return False
+
+def merge_cell(text, fids):
+    if not fids:
+        return text
+    fids_str = ",".join(fids) if isinstance(fids, list) else fids
+    return f"{text}|{fids_str}" if fids_str else text
+
+def normalize_digits(text):
+    return text.translate(ARABIC_DIGITS)
+
+ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+def is_pending(uid):
+    if uid in pending_requests:
+        return True
+    try:
+        uid_str = str(uid)
+        es = 0
+        for row in users_sheet.get_all_values()[1:]:
+            if not row or not any(c.strip() for c in row):
+                es += 1
+                if es >= 5:
+                    break
+                continue
+            es = 0
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                return True
+    except:
+        pass
+    return False
 
 # ─────────────────────────────────────────────────────
 # دوال اللوج
@@ -1768,7 +2058,8 @@ def tg_log(level, msg, uid=None):
             for row in users_sheet.get_all_values()[1:]:
                 if not row or not any(c.strip() for c in row):
                     es += 1
-                    if es >= 5: break
+                    if es >= 5:
+                        break
                     continue
                 es = 0
                 uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
@@ -1778,14 +2069,23 @@ def tg_log(level, msg, uid=None):
                             f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
                             json={"chat_id": int(uid_str), "text": text, "parse_mode": "Markdown"},
                             timeout=5)
-                    except: pass
-        except: pass
+                    except:
+                        pass
+        except:
+            pass
     getattr(logger, level.lower(), logger.info)(msg)
 
-def log_info(m, uid=None): tg_log("INFO", m, uid)
-def log_warning(m, uid=None): tg_log("WARNING", m, uid)
-def log_error(m, uid=None): tg_log("ERROR", m, uid)
-def log_critical(m, uid=None): tg_log("CRITICAL", m, uid)
+def log_info(m, uid=None):
+    tg_log("INFO", m, uid)
+
+def log_warning(m, uid=None):
+    tg_log("WARNING", m, uid)
+
+def log_error(m, uid=None):
+    tg_log("ERROR", m, uid)
+
+def log_critical(m, uid=None):
+    tg_log("CRITICAL", m, uid)
 
 # ─────────────────────────────────────────────────────
 # معالجات الأوامر والرسائل
@@ -1798,7 +2098,8 @@ def start_message(message):
     allowed, admins, owners, open_all, admin_all, _, _ = get_users()
     is_allowed = open_all or uid in allowed
     if not is_allowed:
-        if not is_pending(uid): pending_requests.add(uid)
+        if not is_pending(uid):
+            pending_requests.add(uid)
         bot.send_message(message.chat.id, rejection)
         cm = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         cm.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
@@ -1814,9 +2115,11 @@ def start_message(message):
 def ai_command(message):
     uid = message.from_user.id
     if not OPENROUTER_API_KEY:
-        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid)); return
+        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
+        return
     if not is_ai_allowed(uid):
-        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid)); return
+        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
+        return
     user_ai_enabled[uid] = True
     m = _ai_model()
     bot.send_message(
@@ -1830,7 +2133,8 @@ def ai_command(message):
 def ai_reset_command(message):
     uid = message.from_user.id
     if not is_owner_id(uid):
-        bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+        bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+        return
     ai_reset_model()
     m = _ai_model()
     bot.send_message(message.chat.id, f"✅ تمت إعادة تعيين النموذج إلى {m['icon']} *{m['name']}*", parse_mode="Markdown")
@@ -1854,7 +2158,8 @@ def language_command(message):
     _, rejection = get_settings()
     allowed, _, _, open_all, _, _, _ = get_users()
     if not (open_all or uid in allowed):
-        bot.send_message(message.chat.id, rejection); return
+        bot.send_message(message.chat.id, rejection)
+        return
     user_state[uid] = {"choosing_lang": True}
     bot.send_message(message.chat.id, bt("رسالة_تغيير_اللغة", uid), reply_markup=lang_menu(uid))
 
@@ -1878,16 +2183,20 @@ def handle_contact(message):
     name = message.from_user.full_name or "مجهول"
     try:
         rows = users_sheet.get_all_values()
-        uid_str = str(uid); found = False; es = 0
+        uid_str = str(uid)
+        found = False
+        es = 0
         for i, row in enumerate(rows[1:], start=2):
             if not row or not any(c.strip() for c in row):
                 es += 1
-                if es >= 5: break
+                if es >= 5:
+                    break
                 continue
             es = 0
             if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                 users_sheet.update(f"A{i}:B{i}", [[name, phone]])
-                found = True; break
+                found = True
+                break
         if not found:
             users_sheet.append_row([name, phone, uid, False, False, False, False, False, False],
                                     value_input_option="USER_ENTERED")
@@ -1903,34 +2212,44 @@ def handle_file(message):
     _, rejection = get_settings()
     allowed, admins, owners, open_all, admin_all, _, _ = get_users()
     if not (open_all or uid in allowed):
-        bot.send_message(message.chat.id, rejection); return
+        bot.send_message(message.chat.id, rejection)
+        return
     auto_register_user(message, open_all=open_all)
     f_admin = admin_all or uid in admins
     f_owner = uid in owners
     state = user_state.get(uid, {})
 
-    if message.document: file_id, ftype = message.document.file_id, "document"
-    elif message.photo:    file_id, ftype = message.photo[-1].file_id, "photo"
-    elif message.video:    file_id, ftype = message.video.file_id, "video"
-    elif message.audio:    file_id, ftype = message.audio.file_id, "audio"
-    elif message.voice:    file_id, ftype = message.voice.file_id, "voice"
-    else: return
+    if message.document:
+        file_id, ftype = message.document.file_id, "document"
+    elif message.photo:
+        file_id, ftype = message.photo[-1].file_id, "photo"
+    elif message.video:
+        file_id, ftype = message.video.file_id, "video"
+    elif message.audio:
+        file_id, ftype = message.audio.file_id, "audio"
+    elif message.voice:
+        file_id, ftype = message.voice.file_id, "voice"
+    else:
+        return
 
     def _reset_timer(key, fn):
         t_old = user_state.get(uid, {}).get("_timer")
         if t_old:
-            try: t_old.cancel()
-            except: pass
+            try:
+                t_old.cancel()
+            except:
+                pass
         t = threading.Timer(3.0, fn)
         user_state[uid]["_timer"] = t
         t.start()
 
-    # رفع ملف أدمن
     if state.get("uploading") and state.get("step") in ("waiting_files", "confirm_files"):
         if not (f_admin or f_owner):
-            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+            return
         user_state[uid]["step"] = "waiting_files"
         user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+
         def _finish_upload():
             st = user_state.get(uid, {})
             if st.get("step") == "waiting_files":
@@ -1938,13 +2257,14 @@ def handle_file(message):
                 n = len(st.get("pending_files", []))
                 bot.send_message(message.chat.id, f"📎 تم استلام {n} ملف.\nأرسل المزيد أو اضغط *إرسال*:",
                                  parse_mode="Markdown", reply_markup=upload_confirm_menu(uid))
+
         _reset_timer("uploading", _finish_upload)
         return
 
-    # طلب رفع مستخدم
     if state.get("requesting_upload") and state.get("step") in ("waiting_files_req", "confirm_req"):
         user_state[uid]["step"] = "waiting_files_req"
         user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+
         def _finish_req():
             st = user_state.get(uid, {})
             if st.get("step") == "waiting_files_req":
@@ -1952,14 +2272,16 @@ def handle_file(message):
                 n = len(st.get("pending_files", []))
                 bot.send_message(message.chat.id, f"📎 تم استلام {n} ملف.\nاضغط *إرسال* لإرسال الطلب:",
                                  parse_mode="Markdown", reply_markup=upload_confirm_menu(uid))
+
         _reset_timer("requesting_upload", _finish_req)
         return
 
-    # رفع تعليمات
     if state.get("uploading_help") and state.get("step") == "waiting_file_help":
         if not (f_admin or f_owner):
-            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+            return
         user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+
         def _finish_help():
             st = user_state.get(uid, {})
             if st.get("step") == "waiting_file_help":
@@ -1971,18 +2293,20 @@ def handle_file(message):
                 else:
                     bot.send_message(message.chat.id, bt("رسالة_خطأ", uid))
                 user_state.pop(uid, None)
+
         _reset_timer("uploading_help", _finish_help)
         return
 
-    # بث
     if state.get("broadcasting") and state.get("step") == "waiting_file_or_send":
         if not (f_admin or f_owner):
-            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+            bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+            return
         user_state[uid].setdefault("broadcast_files", []).append({"file_id": file_id, "file_type": ftype})
         return
 
     if not (f_admin or f_owner):
-        bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+        bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+        return
     bot.send_message(message.chat.id, "📤 لرفع ملف اضغط *رفع ملف* أولاً.", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: True)
@@ -2005,31 +2329,30 @@ def handle_message(message):
             transcribed = transcribe_voice(message.voice.file_id, lang="ar")
             if transcribed:
                 text = transcribed
-                # نستمر في المعالجة أدناه كأنها رسالة نصية
             else:
                 bot.send_message(message.chat.id, "❌ لم أستطع فهم التسجيل الصوتي.")
                 return
         else:
-            return  # صوت بدون AI مفعل، نتجاهل
+            return
 
     # معالجة الأزرار (تكون أولوية)
     if text in BUTTON_TEXTS:
-        # لا نخرج من وضع AI، فقط نتعامل مع الزر بالطريقة العادية (سيتم في الأقسام اللاحقة)
+        # لا نخرج من وضع AI، فقط نتعامل مع الزر بالطريقة العادية
         pass
     # معالجة AI (إذا كان مفعلاً)
     elif user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
-        # محاولة تنفيذ أمر إداري (للأدمن/مالك)
         user_role = get_user_role(uid)
-        executed, cmd_response = try_execute_admin_command(text, uid, user_role, message.chat.id)
+        executed, cmd_response = try_execute_admin_command(text, uid, user_role, message.chat.id, bot)
         if executed:
             bot.send_message(message.chat.id, cmd_response, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # معالجة عادية عبر AI
         bot.send_chat_action(message.chat.id, "typing")
+
         def _notify(msg):
             if admin or owner:
                 bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
         response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=_notify, send_notify=(owner or admin))
         if response:
             model_line = f"\n\n_{used_model['icon']} {used_model['name']}_"
@@ -2040,35 +2363,40 @@ def handle_message(message):
                              reply_markup=main_menu(uid, admin=admin, owner=owner))
         return
 
-    # ========== باقي معالجة البوت العادي (الأزرار والأوامر) ==========
-    # اختيار اللغة
+    # ========== باقي معالجة البوت العادي ==========
     if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
-        if text == "🇾🇪 العربية": user_lang[uid] = "ar"
-        elif text == "🇬🇧 English": user_lang[uid] = "en"
+        if text == "🇾🇪 العربية":
+            user_lang[uid] = "ar"
+        elif text == "🇬🇧 English":
+            user_lang[uid] = "en"
         else:
-            bot.send_message(message.chat.id, bt("رسالة_تغيير_اللغة", uid), reply_markup=lang_menu(uid)); return
+            bot.send_message(message.chat.id, bt("رسالة_تغيير_اللغة", uid), reply_markup=lang_menu(uid))
+            return
         user_state.pop(uid, None)
         save_user_lang_to_sheet(uid, user_lang[uid])
         bot.send_message(message.chat.id, bt("رسالة_تم_تغيير_اللغة", uid), reply_markup=telebot.types.ReplyKeyboardRemove())
         return
 
-    # غير مسموح
     if not is_allowed:
         code = calc_secret_code(uid)
         _code_input = normalize_digits(text).strip()
         if _code_input == code and _code_input.isdigit():
             try:
-                uid_str = str(uid); rows = users_sheet.get_all_values()
-                found = False; es = 0
+                uid_str = str(uid)
+                rows = users_sheet.get_all_values()
+                found = False
+                es = 0
                 for i, row in enumerate(rows[1:], start=2):
                     if not row or not any(c.strip() for c in row):
                         es += 1
-                        if es >= 5: break
+                        if es >= 5:
+                            break
                         continue
                     es = 0
                     if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                         users_sheet.update_cell(i, 4, True)
-                        found = True; break
+                        found = True
+                        break
                 if not found:
                     add_user_to_sheet(message.from_user.full_name or "مجهول", uid)
                 pending_requests.discard(uid)
@@ -2082,7 +2410,8 @@ def handle_message(message):
                 log_error(f"secret_code activate: {e}")
                 bot.send_message(message.chat.id, bt("رسالة_خطأ", uid))
             return
-        if not is_pending(uid): pending_requests.add(uid)
+        if not is_pending(uid):
+            pending_requests.add(uid)
         bot.send_message(message.chat.id, rejection)
         cm = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         cm.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
@@ -2090,7 +2419,8 @@ def handle_message(message):
         return
 
     if sheet is None:
-        bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات."); return
+        bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
+        return
 
     auto_register_user(message, open_all=open_all)
 
@@ -2102,9 +2432,11 @@ def handle_message(message):
         ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
         if text in [f"🟢 {ai_button_text}", f"🔴 {ai_button_text}", ai_button_text]:
             if not OPENROUTER_API_KEY:
-                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
+                return
             if not is_ai_allowed(uid):
-                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
+                return
             current = user_ai_enabled.get(uid, False)
             user_ai_enabled[uid] = not current
             if user_ai_enabled[uid]:
@@ -2152,26 +2484,30 @@ def handle_message(message):
                 return
             if state.get("uploading") or state.get("uploading_help") or state.get("requesting_upload") or state.get("broadcasting") or state.get("adding_data") or state.get("editing_data") or state.get("managing_users") or state.get("viewing_help"):
                 user_state.pop(uid, None)
-                bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             user_state.pop(uid, None)
             bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # تعليمات (help)
+        # تعليمات
         if state.get("viewing_help"):
             if text == "👤 تعليمات المستخدم":
                 send_help_materials(message.chat.id, uid, "user")
             elif text == "👑 تعليمات الأدمن":
                 send_help_materials(message.chat.id, uid, "admin")
             else:
-                bot.send_message(message.chat.id, "اختر:", reply_markup=help_view_menu(uid)); return
+                bot.send_message(message.chat.id, "اختر:", reply_markup=help_view_menu(uid))
+                return
             user_state.pop(uid, None)
-            bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+            bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         # البحث بالتاريخ
         if text == bt("زر_التاريخ", uid):
             user_state[uid] = {"date_search": True, "step": "choose_date_type"}
-            bot.send_message(message.chat.id, "📅 اختر نوع البحث:", reply_markup=date_type_menu(uid)); return
+            bot.send_message(message.chat.id, "📅 اختر نوع البحث:", reply_markup=date_type_menu(uid))
+            return
 
         if state.get("date_search"):
             step = state.get("step", "")
@@ -2190,12 +2526,14 @@ def handle_message(message):
                 if mode == "day":
                     d = parse_smart_date(text)
                     if not d:
-                        bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: 27 أو 27/02/2026"); return
+                        bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: 27 أو 27/02/2026")
+                        return
                     user_state[uid]["date_filter"] = d
                 else:
                     d1, d2 = parse_date_range(text)
                     if not d1:
-                        bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: 15-27"); return
+                        bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: 15-27")
+                        return
                     user_state[uid]["date_filter"] = (d1, d2)
                 user_state[uid]["step"] = "choose_subjects"
                 subjects = get_subjects()
@@ -2208,20 +2546,22 @@ def handle_message(message):
                 elif text == bt("زر_حسب_التاريخ", uid):
                     user_state[uid]["display_mode"] = "date"
                 else:
-                    bot.send_message(message.chat.id, "📊 اختر طريقة العرض:", reply_markup=display_mode_menu(uid)); return
+                    bot.send_message(message.chat.id, "📊 اختر طريقة العرض:", reply_markup=display_mode_menu(uid))
+                    return
                 _execute_search(message.chat.id, uid)
             return
 
         # المواد
         if text == bt("زر_المواد", uid):
             user_state.pop(uid, None)
-            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb); return
+            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
+            return
 
-        # قائمة المواد
         _free = not state or set(state.keys()) <= {"subject"}
         if _free and text in subjects_list:
             user_state[uid] = {"subject": text}
-            bot.send_message(message.chat.id, f"📌 *{text}*\nماذا تحتاج؟", parse_mode="Markdown", reply_markup=subject_options_menu(uid)); return
+            bot.send_message(message.chat.id, f"📌 *{text}*\nماذا تحتاج؟", parse_mode="Markdown", reply_markup=subject_options_menu(uid))
+            return
 
         SUBJ_OPTS = [bt(k, uid) for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات"]]
         if _free and state.get("subject") and text in SUBJ_OPTS:
@@ -2230,7 +2570,8 @@ def handle_message(message):
             if text == bt("خيار_السعر", uid):
                 price = next((get_text(safe_get(r, 5)) for r in rows_s if safe_get(r, 5)), None)
                 msg2 = (f"💰 *{subj}*: {price}" if price else f"لا يوجد سعر لـ *{subj}*")
-                bot.send_message(message.chat.id, msg2, parse_mode="Markdown", reply_markup=subject_options_menu(uid)); return
+                bot.send_message(message.chat.id, msg2, parse_mode="Markdown", reply_markup=subject_options_menu(uid))
+                return
             col_map3 = {bt("خيار_الجدول", uid): 2, bt("خيار_التكاليف", uid): 4, bt("خيار_الملخص", uid): 6, bt("خيار_التنبيهات", uid): 7}
             col = col_map3.get(text, 2)
             dates = list(dict.fromkeys(
@@ -2240,122 +2581,160 @@ def handle_message(message):
                 no_map = {bt("خيار_الجدول", uid): "لا توجد محاضرات", bt("خيار_التكاليف", uid): "لا توجد تكاليف",
                           bt("خيار_الملخص", uid): "لا توجد ملخصات", bt("خيار_التنبيهات", uid): "لا توجد تنبيهات"}
                 bot.send_message(message.chat.id, f"{no_map.get(text, 'لا توجد بيانات')} لـ *{subj}*",
-                                 parse_mode="Markdown", reply_markup=subject_options_menu(uid)); return
+                                 parse_mode="Markdown", reply_markup=subject_options_menu(uid))
+                return
             user_state[uid] = {"subject": subj, "action": text, "awaiting_date": True, "col": col, "dates": dates}
-            bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu_kb(dates, uid)); return
+            bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu_kb(dates, uid))
+            return
 
         if state.get("awaiting_date"):
-            subj = state["subject"]; col = state["col"]
+            subj = state["subject"]
+            col = state["col"]
             dates = state.get("dates", [])
             matched = [r for r in data if safe_get(r, 1) == subj and parse_date(safe_get(r, 0)) == text]
             if not matched:
-                bot.send_message(message.chat.id, bt("رسالة_لا_بيانات", uid), reply_markup=dates_menu_kb(dates, uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_لا_بيانات", uid), reply_markup=dates_menu_kb(dates, uid))
+                return
             day = get_day_name(text, uid)
             d_ar = format_date_ar(text)
             day_str = f" ({day})" if day else ""
-            header = f"*{subj}* — {d_ar}{day_str}\n{'─'*25}\n"
-            all_text = header; all_fids = []
+            header = f"*{subj}* — {d_ar}{day_str}\n{'─' * 25}\n"
+            all_text = header
+            all_fids = []
             for row in matched:
                 cell = safe_get(row, col)
-                val = get_text(cell); fids = get_file_ids(cell)
+                val = get_text(cell)
+                fids = get_file_ids(cell)
                 col_icon = {2: "🕐", 4: "📝", 6: "📖", 7: "⚠️"}.get(col, "")
-                if val: all_text += f"{col_icon} {val}\n"
+                if val:
+                    all_text += f"{col_icon} {val}\n"
                 all_fids.extend(fids)
-            send_files_with_text(message.chat.id, all_text, all_fids, reply_markup=dates_menu_kb(dates, uid)); return
+            send_files_with_text(message.chat.id, all_text, all_fids, reply_markup=dates_menu_kb(dates, uid))
+            return
 
         # أزرار القائمة الرئيسية
         if text == bt("زر_التكاليف", uid):
             ld = get_last_date(data, 4)
             if not ld:
-                bot.send_message(message.chat.id, "📭 لا توجد تكاليف.", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, "📭 لا توجد تكاليف.", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             rows_s = [r for r in data if parse_date(safe_get(r, 0)) == ld and (get_text(safe_get(r, 4)) or get_file_ids(safe_get(r, 4)))]
-            day = get_day_name(ld, uid); d_ar = format_date_ar(ld)
-            header = f"📝 *{d_ar} — {day}*\n{'─'*25}\n"
+            day = get_day_name(ld, uid)
+            d_ar = format_date_ar(ld)
+            header = f"📝 *{d_ar} — {day}*\n{'─' * 25}\n"
             all_fids = []
             for row in rows_s:
-                cell = safe_get(row, 4); tx = get_text(cell); fids = get_file_ids(cell)
+                cell = safe_get(row, 4)
+                tx = get_text(cell)
+                fids = get_file_ids(cell)
                 subj_n = safe_get(row, 1)
-                if tx: header += f"📌 {subj_n}: {tx}\n"
-                elif fids: header += f"📌 {subj_n}: 📎 ملف\n"
+                if tx:
+                    header += f"📌 {subj_n}: {tx}\n"
+                elif fids:
+                    header += f"📌 {subj_n}: 📎 ملف\n"
                 all_fids.extend(fids)
-            send_files_with_text(message.chat.id, header, all_fids, reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+            send_files_with_text(message.chat.id, header, all_fids, reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         if text == bt("زر_الجدول", uid):
             ld = get_last_date(data, 2)
             if not ld:
-                bot.send_message(message.chat.id, "📭 لا توجد محاضرات.", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, "📭 لا توجد محاضرات.", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             rows_s = [r for r in data if parse_date(safe_get(r, 0)) == ld and get_text(safe_get(r, 2))]
-            day = get_day_name(ld, uid); d_ar = format_date_ar(ld)
-            resp = f"🕐 *{d_ar} — {day}:*\n{'─'*25}\n"
-            for r in rows_s: resp += f"📌 {safe_get(r, 1)}: {get_text(safe_get(r, 2))}\n"
-            bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+            day = get_day_name(ld, uid)
+            d_ar = format_date_ar(ld)
+            resp = f"🕐 *{d_ar} — {day}:*\n{'─' * 25}\n"
+            for r in rows_s:
+                resp += f"📌 {safe_get(r, 1)}: {get_text(safe_get(r, 2))}\n"
+            bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         if text == bt("زر_الملخصات", uid):
             ld = get_last_date(data, 6)
             if not ld:
-                bot.send_message(message.chat.id, "📭 لا توجد ملخصات.", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, "📭 لا توجد ملخصات.", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             rows_s = [r for r in data if parse_date(safe_get(r, 0)) == ld and (get_text(safe_get(r, 6)) or get_file_ids(safe_get(r, 6)))]
-            day = get_day_name(ld, uid); d_ar = format_date_ar(ld)
-            header = f"📖 *{d_ar} — {day}*\n{'─'*25}\n"
+            day = get_day_name(ld, uid)
+            d_ar = format_date_ar(ld)
+            header = f"📖 *{d_ar} — {day}*\n{'─' * 25}\n"
             all_fids = []
             for row in rows_s:
-                cell = safe_get(row, 6); tx = get_text(cell); fids = get_file_ids(cell)
+                cell = safe_get(row, 6)
+                tx = get_text(cell)
+                fids = get_file_ids(cell)
                 subj_n = safe_get(row, 1)
-                if tx: header += f"📌 {subj_n}: {tx}\n"
-                elif fids: header += f"📌 {subj_n}: 📎 ملف\n"
+                if tx:
+                    header += f"📌 {subj_n}: {tx}\n"
+                elif fids:
+                    header += f"📌 {subj_n}: 📎 ملف\n"
                 all_fids.extend(fids)
-            send_files_with_text(message.chat.id, header, all_fids, reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+            send_files_with_text(message.chat.id, header, all_fids, reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         if text == bt("زر_الاسعار", uid):
             seen = {}
             for r in data:
-                s = safe_get(r, 1); p = get_text(safe_get(r, 5))
-                if s and p and s not in seen: seen[s] = p
+                s = safe_get(r, 1)
+                p = get_text(safe_get(r, 5))
+                if s and p and s not in seen:
+                    seen[s] = p
             if not seen:
-                bot.send_message(message.chat.id, "📭 لا توجد أسعار.", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, "📭 لا توجد أسعار.", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             mx = max(len(s) for s in seen.keys())
             lines = "".join(f"📖 {s:<{mx}} : {p}\n" for s, p in seen.items())
             bot.send_message(message.chat.id, f"💰 *أسعار الملازم:*\n```\n{lines}```",
-                             parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                             parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         if text == bt("زر_التنبيهات", uid):
             alerts = [(safe_get(r, 1), parse_date(safe_get(r, 0)), get_text(safe_get(r, 7))) for r in data if get_text(safe_get(r, 7))]
             if not alerts:
-                bot.send_message(message.chat.id, "✅ لا توجد تنبيهات.", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+                bot.send_message(message.chat.id, "✅ لا توجد تنبيهات.", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             resp = "*⚠️ التنبيهات:*\n" + "─" * 25 + "\n"
             for s, d, a in alerts:
                 d_ar = format_date_ar(d)
                 resp += f"🔔 {s} ({d_ar}):\n{a}\n\n"
-            bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner)); return
+            bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
+            return
 
         # طلب رفع ملف (مستخدم)
         if text == bt("زر_طلب_رفع", uid):
             user_state[uid] = {"requesting_upload": True, "step": "choose_subject"}
-            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb); return
+            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
+            return
 
         if state.get("requesting_upload"):
             step = state.get("step", "")
             if step == "choose_subject" and text in subjects_list:
                 user_state[uid]["subject"] = text
                 user_state[uid]["step"] = "choose_type"
-                bot.send_message(message.chat.id, f"📌 *{text}*\nاختر النوع:", parse_mode="Markdown", reply_markup=file_type_menu(uid)); return
+                bot.send_message(message.chat.id, f"📌 *{text}*\nاختر النوع:", parse_mode="Markdown", reply_markup=file_type_menu(uid))
+                return
             if step == "choose_type":
                 if text == bt("زر_اضافة_تكليف", uid):
                     user_state[uid]["col"] = 4
                 elif text == bt("زر_اضافة_ملخص", uid):
                     user_state[uid]["col"] = 6
-                else: return
+                else:
+                    return
                 user_state[uid]["step"] = "choose_date"
                 subj = state.get("subject", "")
                 bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=back_only_menu(uid))
-                send_date_suggestions(message.chat.id, subject=subj, uid=uid); return
+                send_date_suggestions(message.chat.id, subject=subj, uid=uid)
+                return
             if step == "choose_date":
                 d = parse_smart_date(text)
                 if not d:
-                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: `27/02/2026`", parse_mode="Markdown"); return
+                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة.\nمثال: `27/02/2026`", parse_mode="Markdown")
+                    return
                 user_state[uid]["date"] = d
                 user_state[uid]["step"] = "waiting_files_req"
-                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_only_menu(uid)); return
+                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_only_menu(uid))
+                return
             if step == "confirm_req":
                 if text == "✅ إرسال":
                     files = state.get("pending_files", [])
@@ -2364,7 +2743,8 @@ def handle_message(message):
                     date = state.get("date", "")
                     req_uid = uid
                     if not files:
-                        bot.send_message(message.chat.id, "⚠️ لم يتم استلام أي ملف."); return
+                        bot.send_message(message.chat.id, "⚠️ لم يتم استلام أي ملف.")
+                        return
                     _, admins2, owners2, _, admin_all2, _, _ = get_users()
                     targets = list(set(admins2 + owners2))
                     col_label = "تكليف" if col == 4 else "ملخص"
@@ -2383,7 +2763,8 @@ def handle_message(message):
                             try:
                                 _try_send_file(tid, fid, caption=caption)
                                 bot.send_message(tid, "👆 اختر:", reply_markup=mk_req)
-                            except: pass
+                            except:
+                                pass
                     bot.send_message(message.chat.id, "✅ تم إرسال الطلب! سيتم إخبارك بالنتيجة.", reply_markup=main_menu(uid, admin=admin, owner=owner))
                     user_state.pop(uid, None)
                 return
@@ -2392,21 +2773,25 @@ def handle_message(message):
         # إدارة المستخدمين
         if text == bt("زر_المستخدمين", uid):
             if not owner:
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"managing_users": True, "step": "menu"}
             rows_all = users_sheet.get_all_values()
-            entries = []; es = 0
+            entries = []
+            es = 0
             for row in rows_all[1:]:
                 if not row or not any(c.strip() for c in row):
                     es += 1
-                    if es >= 5: break
+                    if es >= 5:
+                        break
                     continue
                 es = 0
                 name = row[0].strip()
                 uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
                 own_v = row[5].strip().upper() if len(row) > 5 else "FALSE"
                 adm_v = row[4].strip().upper() if len(row) > 4 else "FALSE"
-                if not name or name == "الكل" or not uid_str: continue
+                if not name or name == "الكل" or not uid_str:
+                    continue
                 entries.append((name, uid_str, own_v, adm_v, row))
             entries.sort(key=lambda x: (0 if x[2] == "TRUE" else 1 if x[3] == "TRUE" else 2))
             bot.send_message(message.chat.id, "👥 *قائمة المستخدمين:*\n" + "─" * 25, parse_mode="Markdown", reply_markup=manage_users_menu(uid))
@@ -2428,9 +2813,11 @@ def handle_message(message):
                     if rows:
                         markup = telebot.types.InlineKeyboardMarkup(row_width=1)
                         for row in rows:
-                            if len(row) < 3: continue
+                            if len(row) < 3:
+                                continue
                             uid_str = row[2].strip().lstrip("'")
-                            if not uid_str.isdigit(): continue
+                            if not uid_str.isdigit():
+                                continue
                             name = row[0].strip() or "مجهول"
                             markup.add(telebot.types.InlineKeyboardButton(f"👤 {name}", callback_data=f"show_user_{uid_str}"))
                         bot.send_message(message.chat.id, all_msg, parse_mode="Markdown", reply_markup=markup)
@@ -2439,15 +2826,19 @@ def handle_message(message):
                 return
             if step == "search_id":
                 _, row = find_user_row_by_id(text.strip())
-                if row: send_user_card(message.chat.id, row)
-                else: bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
+                if row:
+                    send_user_card(message.chat.id, row)
+                else:
+                    bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
                 user_state[uid]["step"] = "menu"
                 bot.send_message(message.chat.id, "↩️", reply_markup=manage_users_menu(uid))
                 return
             if step == "search_phone":
                 _, row = find_user_row_by_phone(text.strip())
-                if row: send_user_card(message.chat.id, row)
-                else: bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
+                if row:
+                    send_user_card(message.chat.id, row)
+                else:
+                    bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
                 user_state[uid]["step"] = "menu"
                 bot.send_message(message.chat.id, "↩️", reply_markup=manage_users_menu(uid))
                 return
@@ -2456,21 +2847,26 @@ def handle_message(message):
         # بث الإشعارات
         if text == bt("زر_اشعار", uid):
             if not (admin or owner):
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"broadcasting": True, "step": "waiting_text"}
             m_bcast = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
             m_bcast.add("📤 إرسال بدون نص", back_btn)
-            bot.send_message(message.chat.id, "اكتب نص الإشعار أو اضغط إرسال بدون نص:", reply_markup=m_bcast); return
+            bot.send_message(message.chat.id, "اكتب نص الإشعار أو اضغط إرسال بدون نص:", reply_markup=m_bcast)
+            return
 
         if state.get("broadcasting"):
             step = state.get("step", "")
             if step == "waiting_text":
-                if text == "📤 إرسال بدون نص": user_state[uid]["broadcast_text"] = ""
-                else: user_state[uid]["broadcast_text"] = text
+                if text == "📤 إرسال بدون نص":
+                    user_state[uid]["broadcast_text"] = ""
+                else:
+                    user_state[uid]["broadcast_text"] = text
                 user_state[uid]["step"] = "waiting_file_or_send"
                 m_bcast2 = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
                 m_bcast2.add("📤 إرسال الآن", back_btn)
-                bot.send_message(message.chat.id, "أرسل ملفاً (اختياري) أو اضغط إرسال الآن:", reply_markup=m_bcast2); return
+                bot.send_message(message.chat.id, "أرسل ملفاً (اختياري) أو اضغط إرسال الآن:", reply_markup=m_bcast2)
+                return
             if step == "waiting_file_or_send":
                 if text == "📤 إرسال الآن":
                     _do_broadcast(message.chat.id, uid, admin, owner, state.get("broadcast_text", ""), state.get("broadcast_files", []))
@@ -2480,27 +2876,35 @@ def handle_message(message):
         # رفع التعليمات
         if text == bt("زر_رفع_تعليمات", uid):
             if not (admin or owner):
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"uploading_help": True, "step": "choose_audience"}
-            bot.send_message(message.chat.id, "👥 هذه التعليمات لمن؟", reply_markup=help_audience_menu(uid)); return
+            bot.send_message(message.chat.id, "👥 هذه التعليمات لمن؟", reply_markup=help_audience_menu(uid))
+            return
 
         if state.get("uploading_help"):
             step = state.get("step", "")
             if step == "choose_audience":
-                if text == "👤 للمستخدمين": user_state[uid]["audience"] = "user"
-                elif text == "👑 للأدمن": user_state[uid]["audience"] = "admin"
-                else: return
+                if text == "👤 للمستخدمين":
+                    user_state[uid]["audience"] = "user"
+                elif text == "👑 للأدمن":
+                    user_state[uid]["audience"] = "admin"
+                else:
+                    return
                 user_state[uid]["step"] = "enter_note"
-                bot.send_message(message.chat.id, "📝 أدخل نصاً توضيحياً (اختياري) أو اضغط تخطي:", reply_markup=back_skip_menu(uid)); return
+                bot.send_message(message.chat.id, "📝 أدخل نصاً توضيحياً (اختياري) أو اضغط تخطي:", reply_markup=back_skip_menu(uid))
+                return
             if step == "enter_note":
                 user_state[uid]["note"] = "" if text == "⏭️ تخطي" else text
                 user_state[uid]["step"] = "waiting_file_help"
-                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_skip_menu(uid)); return
+                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_skip_menu(uid))
+                return
             if step == "waiting_file_help":
                 if text == "⏭️ تخطي":
                     note = state.get("note", "")
                     if not note:
-                        bot.send_message(message.chat.id, "⚠️ لازم ترسل نص أو ملف على الأقل."); return
+                        bot.send_message(message.chat.id, "⚠️ لازم ترسل نص أو ملف على الأقل.")
+                        return
                     if save_help_material([], state.get("audience", "user"), note):
                         bot.send_message(message.chat.id, "✅ تم الحفظ!", reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
@@ -2511,32 +2915,41 @@ def handle_message(message):
         # رفع ملف (أدمن)
         if text == bt("زر_رفع_ملف", uid):
             if not (admin or owner):
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"uploading": True, "step": "choose_subject"}
-            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb); return
+            bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
+            return
 
         if state.get("uploading"):
             step = state.get("step", "")
             if step == "choose_subject" and text in subjects_list:
                 user_state[uid]["subject"] = text
                 user_state[uid]["step"] = "choose_type"
-                bot.send_message(message.chat.id, f"📌 *{text}*\nاختر النوع:", parse_mode="Markdown", reply_markup=file_type_menu(uid)); return
+                bot.send_message(message.chat.id, f"📌 *{text}*\nاختر النوع:", parse_mode="Markdown", reply_markup=file_type_menu(uid))
+                return
             if step == "choose_type":
-                if text == bt("زر_اضافة_تكليف", uid): user_state[uid]["col"] = 4
-                elif text == bt("زر_اضافة_ملخص", uid): user_state[uid]["col"] = 6
-                else: return
+                if text == bt("زر_اضافة_تكليف", uid):
+                    user_state[uid]["col"] = 4
+                elif text == bt("زر_اضافة_ملخص", uid):
+                    user_state[uid]["col"] = 6
+                else:
+                    return
                 user_state[uid]["step"] = "choose_date"
                 subj = state.get("subject", "")
                 bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=back_only_menu(uid))
-                send_date_suggestions(message.chat.id, subject=subj, uid=uid); return
+                send_date_suggestions(message.chat.id, subject=subj, uid=uid)
+                return
             if step == "choose_date":
                 d = parse_smart_date(text)
                 if not d:
                     bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown")
-                    send_date_suggestions(message.chat.id, subject=state.get("subject", ""), uid=uid); return
+                    send_date_suggestions(message.chat.id, subject=state.get("subject", ""), uid=uid)
+                    return
                 user_state[uid]["date"] = d
                 user_state[uid]["step"] = "waiting_files"
-                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_only_menu(uid)); return
+                bot.send_message(message.chat.id, "📎 أرسل الملف أو الملفات:", reply_markup=back_only_menu(uid))
+                return
             if step == "confirm_files":
                 if text == "✅ إرسال":
                     files = state.get("pending_files", [])
@@ -2555,9 +2968,11 @@ def handle_message(message):
         # إضافة بيانات
         if text == bt("زر_اضافة", uid):
             if not (admin or owner):
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"adding_data": True, "step": "choose_type"}
-            bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=add_data_menu(uid)); return
+            bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=add_data_menu(uid))
+            return
 
         if state.get("adding_data"):
             step = state.get("step", "")
@@ -2581,7 +2996,8 @@ def handle_message(message):
                 label_map = {"task": "لا يوجد تكليف", "summary": "لا يوجد ملخص", "alert": "لا يوجد تنبيه", "price": "لا يوجد سعر"}
                 msg_no = label_map.get(dtype, "لا يوجد")
                 bot.send_message(message.chat.id, f"✅ تم التسجيل: {msg_no}", reply_markup=main_menu(uid, admin=admin, owner=owner))
-                user_state.pop(uid, None); return
+                user_state.pop(uid, None)
+                return
             if step == "choose_subject" and text in subjects_list:
                 user_state[uid]["subject"] = text
                 dtype = state.get("data_type", "")
@@ -2605,7 +3021,8 @@ def handle_message(message):
                 if not d:
                     bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown")
                     send_date_suggestions(message.chat.id, for_lecture=(state.get("data_type") == "lecture"),
-                                          for_alert=(state.get("data_type") == "alert"), uid=uid); return
+                                          for_alert=(state.get("data_type") == "alert"), uid=uid)
+                    return
                 user_state[uid]["date"] = d
                 dtype = state.get("data_type", "")
                 if dtype == "lecture":
@@ -2655,7 +3072,8 @@ def handle_message(message):
                     time_val = TIME_MAP[text]
                 elif text == "⏰ توقيت آخر":
                     user_state[uid]["step"] = "enter_time_custom"
-                    bot.send_message(message.chat.id, "أدخل الوقت:\n`08:00 - 09:30`", parse_mode="Markdown", reply_markup=back_with_noexist(uid)); return
+                    bot.send_message(message.chat.id, "أدخل الوقت:\n`08:00 - 09:30`", parse_mode="Markdown", reply_markup=back_with_noexist(uid))
+                    return
                 elif text == "لا يوجد":
                     time_val = "لا يوجد"
                 else:
@@ -2667,7 +3085,10 @@ def handle_message(message):
                 _process_lecture_time(message.chat.id, uid, state, time_val, admin, owner)
                 return
             if step == "confirm_lecture_overwrite":
-                subj = state.get("subject", ""); date = state.get("date", ""); room = state.get("room", ""); time_val = state.get("time_val", "")
+                subj = state.get("subject", "")
+                date = state.get("date", "")
+                room = state.get("room", "")
+                time_val = state.get("time_val", "")
                 if text == "🔄 استبدال":
                     if save_lecture(date, subj, time_val, room):
                         mk_done = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -2691,10 +3112,13 @@ def handle_message(message):
                 date = state.get("date", "")
                 val = text
                 if dtype == "price":
-                    rows_s = sheet.get_all_values(); updated = False
+                    rows_s = sheet.get_all_values()
+                    updated = False
                     for i, row in enumerate(rows_s[1:], start=2):
                         if safe_get(row, 1) == subj:
-                            sheet.update_cell(i, 6, val); updated = True; break
+                            sheet.update_cell(i, 6, val)
+                            updated = True
+                            break
                     if not updated:
                         sheet.append_row(["", subj, "", "", "", val, "", ""], value_input_option="USER_ENTERED")
                     bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
@@ -2709,7 +3133,8 @@ def handle_message(message):
                         user_state[uid]["existing_val"] = existing
                         user_state[uid]["pending_val"] = val
                         mk_ow = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-                        mk_ow.add("✏️ بجانبه", "🔄 بدله"); mk_ow.add(back_btn)
+                        mk_ow.add("✏️ بجانبه", "🔄 بدله")
+                        mk_ow.add(back_btn)
                         bot.send_message(message.chat.id, f"⚠️ يوجد مدخل سابق:\n`{existing}`\n\nماذا تريد؟", parse_mode="Markdown", reply_markup=mk_ow)
                     else:
                         ok = save_text_to_cell(date, subj, col, val)
@@ -2717,14 +3142,20 @@ def handle_message(message):
                         user_state.pop(uid, None)
                 return
             if step == "confirm_overwrite":
-                dtype = state.get("data_type", ""); subj = state.get("subject", ""); date = state.get("date", "")
+                dtype = state.get("data_type", "")
+                subj = state.get("subject", "")
+                date = state.get("date", "")
                 col = {"task": 4, "summary": 6, "alert": 7}.get(dtype, 4)
-                existing = state.get("existing_val", ""); pending = state.get("pending_val", "")
-                if text == "✏️ بجانبه": final = existing + " | " + pending
-                elif text == "🔄 بدله": final = pending
+                existing = state.get("existing_val", "")
+                pending = state.get("pending_val", "")
+                if text == "✏️ بجانبه":
+                    final = existing + " | " + pending
+                elif text == "🔄 بدله":
+                    final = pending
                 else:
                     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
-                    user_state.pop(uid, None); return
+                    user_state.pop(uid, None)
+                    return
                 ok = save_text_to_cell(date, subj, col, final)
                 bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid) if ok else bt("رسالة_خطأ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 user_state.pop(uid, None)
@@ -2734,9 +3165,11 @@ def handle_message(message):
         # تعديل بيانات
         if text == bt("زر_تعديل", uid):
             if not (admin or owner):
-                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid)); return
+                bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
+                return
             user_state[uid] = {"editing_data": True, "step": "choose_type"}
-            bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=edit_data_menu(uid)); return
+            bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=edit_data_menu(uid))
+            return
 
         if state.get("editing_data"):
             step = state.get("step", "")
@@ -2747,7 +3180,8 @@ def handle_message(message):
             if step == "choose_type" and text in EDIT_MAP:
                 user_state[uid]["data_type"] = EDIT_MAP[text]
                 user_state[uid]["step"] = "choose_subject"
-                bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb); return
+                bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
+                return
             if step == "choose_subject" and text in subjects_list:
                 user_state[uid]["subject"] = text
                 dtype = state.get("data_type", "")
@@ -2771,15 +3205,18 @@ def handle_message(message):
                         bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu_kb(dates, uid))
                 return
             if step == "choose_date_edit":
-                subj = state.get("subject", ""); col = state.get("col", 2)
+                subj = state.get("subject", "")
+                col = state.get("col", 2)
                 matched = [r for r in data if safe_get(r, 1) == subj and parse_date(safe_get(r, 0)) == text]
                 if not matched:
-                    bot.send_message(message.chat.id, bt("رسالة_لا_بيانات", uid)); return
+                    bot.send_message(message.chat.id, bt("رسالة_لا_بيانات", uid))
+                    return
                 current = get_text(safe_get(matched[0], col))
                 user_state[uid]["date"] = text
                 user_state[uid]["current_val"] = current
                 user_state[uid]["step"] = "choose_action"
-                bot.send_message(message.chat.id, f"القيمة الحالية: *{current or 'فارغ'}*", parse_mode="Markdown", reply_markup=edit_action_menu(uid)); return
+                bot.send_message(message.chat.id, f"القيمة الحالية: *{current or 'فارغ'}*", parse_mode="Markdown", reply_markup=edit_action_menu(uid))
+                return
             if step == "choose_action":
                 if text == bt("زر_تعديل_زرار", uid):
                     user_state[uid]["step"] = "enter_new_val"
@@ -2789,17 +3226,20 @@ def handle_message(message):
                     cur = state.get("current_val", "")
                     mk_del = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
                     mk_del.add("✅ نعم، احذف", "❌ إلغاء")
-                    bot.send_message(message.chat.id, f"⚠️ هل أنت متأكد من حذف:\n*{cur}*؟", parse_mode="Markdown", reply_markup=mk_del)
+                    bot.send_message(message.chat.id, f"⚠️ هل أنت متأكد من حذف:\n*{cur}*？", parse_mode="Markdown", reply_markup=mk_del)
                 return
             if step == "confirm_delete":
                 if text == "✅ نعم، احذف":
-                    dtype = state.get("data_type", ""); subj = state.get("subject", ""); date = state.get("date", "")
+                    dtype = state.get("data_type", "")
+                    subj = state.get("subject", "")
+                    date = state.get("date", "")
                     col = COL_MAP.get(dtype, 2)
                     if dtype == "price":
                         rows_s = sheet.get_all_values()
                         for i, row in enumerate(rows_s[1:], start=2):
                             if safe_get(row, 1) == subj:
-                                sheet.update_cell(i, 6, ""); break
+                                sheet.update_cell(i, 6, "")
+                                break
                         bot.send_message(message.chat.id, bt("رسالة_تم_الحذف", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
                         ok = delete_cell(date, subj, col)
@@ -2810,13 +3250,16 @@ def handle_message(message):
                     bot.send_message(message.chat.id, "تم الإلغاء.", reply_markup=edit_action_menu(uid))
                 return
             if step == "enter_new_val":
-                dtype = state.get("data_type", ""); subj = state.get("subject", ""); date = state.get("date", "")
+                dtype = state.get("data_type", "")
+                subj = state.get("subject", "")
+                date = state.get("date", "")
                 col = COL_MAP.get(dtype, 2)
                 if dtype == "price":
                     rows_s = sheet.get_all_values()
                     for i, row in enumerate(rows_s[1:], start=2):
                         if safe_get(row, 1) == subj:
-                            sheet.update_cell(i, 6, text); break
+                            sheet.update_cell(i, 6, text)
+                            break
                     bot.send_message(message.chat.id, bt("رسالة_تم_التعديل", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
                     ok = save_text_to_cell(date, subj, col, text)
@@ -2838,21 +3281,25 @@ def handle_message(message):
 def handle_role(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
-        bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
     parts = call.data.split("_", 2)
     new_role = parts[1]
     target_uid = parts[2]
     decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
     try:
-        rows = users_sheet.get_all_values(); es = 0
+        rows = users_sheet.get_all_values()
+        es = 0
         for i, row in enumerate(rows[1:], start=2):
             if not row or not any(c.strip() for c in row):
                 es += 1
-                if es >= 5: break
+                if es >= 5:
+                    break
                 continue
             es = 0
             cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
-            if cell_id != target_uid: continue
+            if cell_id != target_uid:
+                continue
             cur_own = row[5].strip().upper() if len(row) > 5 else "FALSE"
             cur_adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
             cur_allow = row[3].strip().upper() if len(row) > 3 else "FALSE"
@@ -2861,49 +3308,64 @@ def handle_role(call):
             if new_role == "owner" and cur_own == "TRUE":
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "تم إلغاء صلاحية المالك"
-                try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
-                except: pass
+                try:
+                    bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                except:
+                    pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner")
             elif new_role == "admin" and cur_adm == "TRUE" and cur_own != "TRUE":
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "تم إلغاء صلاحية الأدمن"
-                try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
-                except: pass
+                try:
+                    bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                except:
+                    pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
             elif new_role == "user" and cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
                 users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                 label = "⛔ تم إلغاء الصلاحية"
-                try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
-                except: pass
+                try:
+                    bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
+                except:
+                    pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
             elif new_role == "owner":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
                 label = "👑 تم تعيين مالك"
-                try: bot.send_message(int(target_uid), "👑 تهانينا! تمت ترقيتك إلى مالك.")
-                except: pass
+                try:
+                    bot.send_message(int(target_uid), "👑 تهانينا! تمت ترقيتك إلى مالك.")
+                except:
+                    pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_owner")
             elif new_role == "admin":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
                 label = "⭐ تم تعيين أدمن"
-                try: bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
-                except: pass
+                try:
+                    bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
+                except:
+                    pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_admin")
             else:
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "👤 تم تعيين مستخدم"
                 if cur_own == "TRUE":
-                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
-                    except: pass
+                    try:
+                        bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                    except:
+                        pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner_to_user")
                 elif cur_adm == "TRUE":
-                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
-                    except: pass
+                    try:
+                        bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                    except:
+                        pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
                 else:
-                    try: bot.send_message(int(target_uid), bt("رسالة_موافقة", int(target_uid)))
-                    except: pass
+                    try:
+                        bot.send_message(int(target_uid), bt("رسالة_موافقة", int(target_uid)))
+                    except:
+                        pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_user")
-            # تحديث البطاقة
             try:
                 rows2 = users_sheet.get_all_values()
                 for row2 in rows2[1:]:
@@ -2913,7 +3375,8 @@ def handle_role(call):
             except Exception as e2:
                 if "message is not modified" not in str(e2):
                     log_error(f"role edit: {e2}")
-            bot.answer_callback_query(call.id, label); return
+            bot.answer_callback_query(call.id, label)
+            return
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
     except Exception as e:
         log_error(f"handle_role: {e}")
@@ -2923,9 +3386,10 @@ def handle_role(call):
 def handle_ai_permission(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
-        bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
     parts = call.data.split("_", 2)
-    action = parts[1]  # on or off
+    action = parts[1]
     target_uid = parts[2]
     decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
     allowed = (action == "on")
@@ -2937,7 +3401,8 @@ def handle_ai_permission(call):
                 if len(row) > 2 and row[2].strip().lstrip("'") == target_uid:
                     send_user_card(call.message.chat.id, row)
                     break
-        except: pass
+        except:
+            pass
         bot.answer_callback_query(call.id, label)
         name, phone = _get_user_name_phone(int(target_uid))
         notify_owners_action(int(target_uid), name, phone, decided_by, "ai_enabled" if allowed else "ai_disabled")
@@ -2946,7 +3411,8 @@ def handle_ai_permission(call):
                 bot.send_message(int(target_uid), bt("رسالة_ai_تفعيل", int(target_uid)))
             else:
                 bot.send_message(int(target_uid), bt("رسالة_ai_تعطيل", int(target_uid)))
-        except: pass
+        except:
+            pass
     else:
         bot.answer_callback_query(call.id, "❌ فشل التحديث")
 
@@ -2964,12 +3430,14 @@ def handle_show_user(call):
 def handle_approval(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
-        bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
     decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
     short_key = call.data.split("_", 1)[1]
     req_data = _approval_store.get(short_key)
     if not req_data:
-        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب"); return
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب")
+        return
     requester_id = req_data["requester_id"]
     requester_name = req_data["requester_name"]
     phone = req_data["phone"]
@@ -2977,31 +3445,39 @@ def handle_approval(call):
         try:
             uid_str = str(requester_id)
             rows = users_sheet.get_all_values()
-            found = False; es = 0
+            found = False
+            es = 0
             for i, row in enumerate(rows[1:], start=2):
                 if not row or not any(c.strip() for c in row):
                     es += 1
-                    if es >= 5: break
+                    if es >= 5:
+                        break
                     continue
                 es = 0
                 if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
                     users_sheet.update_cell(i, 4, True)
-                    found = True; break
+                    found = True
+                    break
             if not found:
                 add_user_to_sheet(requester_name, requester_id)
             pending_requests.discard(requester_id)
             _approval_store.pop(short_key, None)
-            try: bot.send_message(requester_id, bt("رسالة_موافقة", requester_id))
-            except: pass
+            try:
+                bot.send_message(requester_id, bt("رسالة_موافقة", requester_id))
+            except:
+                pass
             notify_owners_action(requester_id, requester_name, phone, decided_by, "approve")
         except Exception as e:
             log_error(f"approve: {e}")
-            bot.answer_callback_query(call.id, "❌ خطأ في الحفظ"); return
+            bot.answer_callback_query(call.id, "❌ خطأ في الحفظ")
+            return
     else:
         pending_requests.discard(requester_id)
         _approval_store.pop(short_key, None)
-        try: bot.send_message(requester_id, bt("رسالة_رفض_طلب", requester_id))
-        except: pass
+        try:
+            bot.send_message(requester_id, bt("رسالة_رفض_طلب", requester_id))
+        except:
+            pass
         notify_owners_action(requester_id, requester_name, phone, decided_by, "reject")
     bot.answer_callback_query(call.id)
 
@@ -3010,7 +3486,8 @@ def handle_multiselect(call):
     uid = call.from_user.id
     state = user_state.get(uid, {})
     parts = call.data.split(":", 1)
-    prefix = parts[0]; value = parts[1]
+    prefix = parts[0]
+    value = parts[1]
     if prefix == "ms_subj":
         subjects = get_subjects()
         sel_key = "sel_subjects"
@@ -3021,7 +3498,8 @@ def handle_multiselect(call):
         items = [("محاضرات", "محاضرات"), ("تكاليف", "تكاليف"), ("ملخصات", "ملخصات")]
         all_vals = ["محاضرات", "تكاليف", "ملخصات"]
     else:
-        bot.answer_callback_query(call.id); return
+        bot.answer_callback_query(call.id)
+        return
     selected = set(state.get(sel_key, []))
     if value == "__all__":
         if "__all__" in selected or set(all_vals) == selected:
@@ -3050,7 +3528,8 @@ def handle_multiselect(call):
                 user_state[uid]["step"] = "choose_display"
                 try:
                     bot.edit_message_text("📊 اختر طريقة العرض:", call.message.chat.id, call.message.message_id, reply_markup=telebot.types.InlineKeyboardMarkup())
-                except: pass
+                except:
+                    pass
                 bot.send_message(call.message.chat.id, "📊 اختر طريقة العرض:", reply_markup=display_mode_menu(uid))
             else:
                 user_state[uid]["display_mode"] = "date" if len(sel_subjs) == 1 else "subject"
@@ -3058,29 +3537,35 @@ def handle_multiselect(call):
         return
     else:
         if value in selected:
-            selected.discard(value); selected.discard("__all__")
+            selected.discard(value)
+            selected.discard("__all__")
         else:
             selected.add(value)
-        if set(all_vals) <= selected: selected.add("__all__")
-        else: selected.discard("__all__")
+        if set(all_vals) <= selected:
+            selected.add("__all__")
+        else:
+            selected.discard("__all__")
     user_state[uid][sel_key] = list(selected)
     kb = build_multiselect_kb(items, selected, prefix)
     try:
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=kb)
-    except: pass
+    except:
+        pass
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("file_req:"))
 def handle_file_request_decision(call):
     caller_id = call.from_user.id
     if not _is_admin_or_owner(caller_id):
-        bot.answer_callback_query(call.id, "⛔ غير مسموح"); return
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
     parts = call.data.split(":")
     action = parts[1]
     short_key = parts[2]
     req_data = _file_req_store.get(short_key)
     if not req_data:
-        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب"); return
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية الطلب")
+        return
     req_uid = req_data["req_uid"]
     date_val = req_data["date"]
     subject = req_data["subj"]
@@ -3092,93 +3577,25 @@ def handle_file_request_decision(call):
         _file_req_store.pop(short_key, None)
         try:
             bot.send_message(req_uid, f"✅ تمت الموافقة على ملفك!\n📌 {subject}\n📅 {date_val}")
-        except: pass
+        except:
+            pass
         try:
             bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=telebot.types.InlineKeyboardMarkup())
             bot.send_message(call.message.chat.id, f"✅ موافقة بواسطة {decided_by} | {subject} {date_val}")
-        except: pass
+        except:
+            pass
     else:
         _file_req_store.pop(short_key, None)
         try:
             bot.send_message(req_uid, f"❌ تم رفض طلب رفع ملف\n📌 {subject}\n📅 {date_val}")
-        except: pass
+        except:
+            pass
         try:
             bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=telebot.types.InlineKeyboardMarkup())
             bot.send_message(call.message.chat.id, f"❌ رفض بواسطة {decided_by} | {subject} {date_val}")
-        except: pass
+        except:
+            pass
     bot.answer_callback_query(call.id)
-
-# ─────────────────────────────────────────────────────
-# دوال مساعدة إضافية
-# ─────────────────────────────────────────────────────
-def parse_smart_date(raw):
-    text = normalize_digits(raw.strip())
-    if is_valid_date(text): return parse_date(text)
-    if text.isdigit():
-        d = int(text)
-        if 1 <= d <= 31: return smart_date_from_day(d)
-    return None
-
-def smart_date_from_day(day):
-    now = datetime.now(YEMEN_TZ)
-    if day <= now.day:
-        try: return now.replace(day=day).strftime("%d/%m/%Y")
-        except: return now.strftime("%d/%m/%Y")
-    else:
-        first = now.replace(day=1)
-        last_m = first - timedelta(days=1)
-        try: return last_m.replace(day=day).strftime("%d/%m/%Y")
-        except: return now.strftime("%d/%m/%Y")
-
-def parse_date_range(raw):
-    text = normalize_digits(raw.strip())
-    m = re.match(r'(\d{1,2}/\d{1,2}/\d{4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{4})', text)
-    if m and is_valid_date(m.group(1)) and is_valid_date(m.group(2)):
-        return parse_date(m.group(1)), parse_date(m.group(2))
-    m2 = re.match(r'^(\d{1,2})[-–](\d{1,2})$', text)
-    if m2:
-        return smart_date_from_day(int(m2.group(1))), smart_date_from_day(int(m2.group(2)))
-    return None, None
-
-def save_file_to_cell(date, subject, col, fids, merge=False):
-    try:
-        fids = fids if isinstance(fids, list) else [fids]
-        rows = sheet.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
-                current = safe_get(row, col)
-                all_fids = (get_file_ids(current) + fids) if merge else fids
-                sheet.update_cell(i, col + 1, merge_cell(get_text(current), all_fids))
-                return True
-        new_row = [""] * 8
-        new_row[0] = date; new_row[1] = subject; new_row[col] = f"|{','.join(fids)}"
-        sheet.append_row(new_row, value_input_option="USER_ENTERED"); return True
-    except Exception as e:
-        log_error(f"save_file_to_cell: {e}"); return False
-
-def merge_cell(text, fids):
-    if not fids: return text
-    fids_str = ",".join(fids) if isinstance(fids, list) else fids
-    return f"{text}|{fids_str}" if fids_str else text
-
-def normalize_digits(text):
-    return text.translate(ARABIC_DIGITS)
-
-ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-
-def is_pending(uid):
-    if uid in pending_requests: return True
-    try:
-        uid_str = str(uid); es = 0
-        for row in users_sheet.get_all_values()[1:]:
-            if not row or not any(c.strip() for c in row):
-                es += 1
-                if es >= 5: break
-                continue
-            es = 0
-            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str: return True
-    except: pass
-    return False
 
 # ─────────────────────────────────────────────────────
 # تشغيل البوت
