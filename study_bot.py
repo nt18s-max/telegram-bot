@@ -277,7 +277,7 @@ def ask_gemini(uid, user_text, user_role, system_prompt):
     if not GEMINI_API_KEY:
         return None, None
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{
                 "parts": [{"text": system_prompt + "\n\n" + user_text}]
@@ -291,7 +291,7 @@ def ask_gemini(uid, user_text, user_role, system_prompt):
         if resp.status_code == 200:
             data = resp.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return text, {"id": "gemini-2.0-flash-exp", "name": "Gemini 2.0 Flash", "icon": "✨"}
+            return text, {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "icon": "✨"}
         else:
             log_error(f"Gemini error {resp.status_code}: {resp.text[:200]}", uid)
             return None, None
