@@ -1,16 +1,22 @@
 # ====================================================
 # study_bot.py — النسخة النهائية الكاملة
 # جميع الميزات:
-# - AI بنماذج محدثة مع fallback (Gemini أولاً ثم OpenRouter)
-# - دعم التسجيلات الصوتية
-# - أوامر إدارية باللغة الطبيعية
-# - إدارة المستخدمين (بحث بالID/رقم/اسم، عرض الكل، آخر 3)
-# - بطاقة مستخدم مع أزرار (مالك/أدمن/مستخدم، AI، تغيير الاسم)
-# - زر سويتش للنشر التلقائي (AUTO PUBLISH) مع عمود في الشيت
-# - إشعارات تلقائية عند إضافة محتوى جديد
+# - دعم متعدد لمزودي AI (OpenRouter, Gemini, NVIDIA, Anthropic, Cohere, DeepSeek, Mistral, Groq)
+# - إدارة عبر شيت ai_providers (ترتيب أولوية، نماذج auto)
+# - زر AI سويتش + زر النشر التلقائي (عمود K)
+# - AI فقط من القائمة الرئيسية
+# - رسالة "نايف يكتب..." فورية ومتحركة حتى الرد ثم تُحذف
+# - معالجة غير متزامنة (threading) لا تعلق الأزرار
+# - دعم التسجيلات الصوتية (Whisper)
+# - أوامر إدارية نصية باللغة الطبيعية
+# - إدارة مستخدمين متكاملة (بحث ذكي، عرض الكل، آخر 3)
+# - بطاقة مستخدم (أزرار: أدمن، مستخدم، AI، تغيير الاسم)
 # - طلب انضمام بـ 6 أزرار (رتب + تغيير اسم + تفعيل AI + رفض)
-# - دعم اللغتين (عربي/إنجليزي) عبر bot_texts
-# - مراقبة تغييرات الشيت
+# - تقارير لوج متطورة (تحديث بدلاً من تكرار)
+# - إشعارات النشر التلقائي للمشتركين
+# - مراقبة تغييرات الشيت وإشعارات
+# - ميزة نايف: إرسال file_id إلى اللوج مع كلمة "نايف"
+# - استدعاء الملفات عبر الذكاء الاصطناعي (للمالك فقط)
 # ====================================================
 
 import telebot
@@ -28,8 +34,6 @@ YEMEN_TZ = pytz.timezone('Asia/Aden')
 LOG_BOT_TOKEN = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
 STUDY_BOT_TOKEN = os.environ.get("STUDY_BOT_TOKEN", "")
 SHEET_KEY = os.environ.get("SHEET_KEY", "")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 
 logging.basicConfig(level=logging.INFO,
@@ -236,21 +240,16 @@ _approval_counter = [0]
 _users_snapshot = {}
 user_ai_enabled = {}
 user_auto_publish = {}
+AI_PROVIDERS = []
+_temp_admin_actions = {}
+_log_messages = {}
+_user_card_messages = {}
+_pending_files = {}
+_naif_files = {}
 
 # ─────────────────────────────────────────────────────
-# 🤖 AI — Gemini أولاً ثم OpenRouter
+# دوال AI المتعددة
 # ─────────────────────────────────────────────────────
-AI_MODELS = [
-    {"id": "openrouter/free", "name": "Auto (أفضل نموذج مجاني)", "icon": "🎯"},
-    {"id": "google/gemini-2.0-flash-exp:free", "name": "Gemini 2.0 Flash", "icon": "✨"},
-    {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Llama 3.2 3B", "icon": "🦙"},
-    {"id": "microsoft/phi-3-mini-128k-instruct:free", "name": "Phi-3 Mini", "icon": "🔵"},
-    {"id": "mistralai/mistral-7b-instruct:free", "name": "Mistral 7B", "icon": "💨"},
-    {"id": "qwen/qwen-2.5-7b-instruct:free", "name": "Qwen 2.5 7B", "icon": "🐉"},
-    {"id": "deepseek/deepseek-chat:free", "name": "DeepSeek Chat", "icon": "🔍"},
-]
-
-_ai_current_model = [0]
 _ai_histories = {}
 _AI_MAX_HISTORY = 20
 
@@ -259,25 +258,131 @@ AI_SYSTEM_PROMPT_BASE = (
     "إجاباتك مختصرة وواضحة ومناسبة للطلاب. لا تستخدم markdown بشكل مبالغ فيه."
 )
 
-def _ai_model():
-    return AI_MODELS[_ai_current_model[0]]
-
-def _ai_next_model():
-    idx = _ai_current_model[0] + 1
-    if idx < len(AI_MODELS):
-        _ai_current_model[0] = idx
-        return AI_MODELS[idx]
-    return None
-
-def ai_reset_model():
-    _ai_current_model[0] = 0
-
-def ask_gemini(uid, user_text, user_role, system_prompt):
-    """استدعاء Gemini API (مجاني)"""
-    if not GEMINI_API_KEY:
-        return None, None
+def load_ai_providers():
+    """قراءة قائمة مزودي الذكاء الاصطناعي من الشيت ai_providers"""
+    global AI_PROVIDERS
+    AI_PROVIDERS = []
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+        sheet_providers = spreadsheet.worksheet("ai_providers")
+        rows = sheet_providers.get_all_values()
+        if not rows:
+            logger.info("⚠️ لا توجد صفحة ai_providers أو فارغة.")
+            return
+        for row in rows[1:]:
+            if len(row) < 5:
+                continue
+            order = row[0].strip()
+            provider = row[1].strip().lower()
+            api_key = row[2].strip()
+            model = row[3].strip().lower()
+            enabled = row[4].strip().upper() == "TRUE"
+            if not enabled or not api_key:
+                continue
+
+            # معالجة النموذج "auto"
+            if model == "auto":
+                if provider == "gemini":
+                    model = "gemini-1.5-flash"
+                elif provider == "openrouter":
+                    model = "openrouter/free"
+                elif provider == "nvidia":
+                    model = "nvidia/nemotron-3-super:free"
+                elif provider == "anthropic":
+                    model = "claude-3-haiku-20240307"
+                elif provider == "cohere":
+                    model = "command-r"
+                elif provider == "deepseek":
+                    model = "deepseek-chat"
+                elif provider == "mistral":
+                    model = "mistral-small-latest"
+                elif provider == "groq":
+                    model = "llama3-70b-8192"
+                else:
+                    continue
+
+            if provider == "gemini":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "gemini",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"Gemini {model}",
+                    "icon": "✨"
+                })
+            elif provider == "openrouter":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "openrouter",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": "OpenRouter Auto" if model == "openrouter/free" else model.split('/')[-1].replace(':free', ''),
+                    "icon": "🎯"
+                })
+            elif provider == "nvidia":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "nvidia",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"NVIDIA {model.split('/')[-1]}",
+                    "icon": "🟢"
+                })
+            elif provider == "anthropic":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "anthropic",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"Claude {model}",
+                    "icon": "🔮"
+                })
+            elif provider == "cohere":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "cohere",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"Cohere {model}",
+                    "icon": "🌀"
+                })
+            elif provider == "deepseek":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "deepseek",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"DeepSeek {model}",
+                    "icon": "🔍"
+                })
+            elif provider == "mistral":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "mistral",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"Mistral {model}",
+                    "icon": "💨"
+                })
+            elif provider == "groq":
+                AI_PROVIDERS.append({
+                    "order": int(order) if order.isdigit() else 999,
+                    "provider": "groq",
+                    "api_key": api_key,
+                    "model": model,
+                    "name": f"Groq {model}",
+                    "icon": "⚡"
+                })
+        AI_PROVIDERS.sort(key=lambda x: x["order"])
+        logger.info(f"✅ تم تحميل {len(AI_PROVIDERS)} مزود AI")
+        for p in AI_PROVIDERS:
+            logger.info(f"   {p['order']}: {p['provider']} - {p['model']}")
+    except Exception as e:
+        logger.warning(f"لم يتم العثور على صفحة ai_providers أو خطأ: {e}")
+        AI_PROVIDERS = []
+
+def call_gemini(provider, uid, user_text, system_prompt):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{provider['model']}:generateContent?key={provider['api_key']}"
         payload = {
             "contents": [{
                 "parts": [{"text": system_prompt + "\n\n" + user_text}]
@@ -291,7 +396,7 @@ def ask_gemini(uid, user_text, user_role, system_prompt):
         if resp.status_code == 200:
             data = resp.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return text, {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "icon": "✨"}
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
         else:
             log_error(f"Gemini error {resp.status_code}: {resp.text[:200]}", uid)
             return None, None
@@ -299,101 +404,206 @@ def ask_gemini(uid, user_text, user_role, system_prompt):
         log_error(f"Gemini exception: {e}", uid)
         return None, None
 
-def ask_openrouter(uid, user_text, user_role, system_prompt, notify_fn=None, send_notify=True):
-    """استدعاء OpenRouter API"""
-    if not OPENROUTER_API_KEY:
-        return None, None
-
+def call_openrouter(provider, uid, user_text, system_prompt, notify_fn=None, send_notify=True):
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {provider['api_key']}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://t.me/study_bot",
         "X-Title": "Study Bot",
     }
+    payload = {
+        "model": provider["model"],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *_ai_histories[uid],
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.7,
+    }
+    try:
+        resp = _requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers, json=payload, timeout=30
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            return content, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"OpenRouter {resp.status_code} {resp.text[:200]} on {provider['model']}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"OpenRouter exception: {e}", uid)
+        return None, None
 
-    tried = set()
-    last_error = None
-    while True:
-        model = _ai_model()
-        if model["id"] in tried:
-            break
-        tried.add(model["id"])
-
+def call_nvidia(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
         payload = {
-            "model": model["id"],
+            "model": provider["model"],
             "messages": [
                 {"role": "system", "content": system_prompt},
-                *_ai_histories[uid],
+                {"role": "user", "content": user_text}
             ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"NVIDIA error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"NVIDIA exception: {e}", uid)
+        return None, None
+
+def call_anthropic(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "x-api-key": provider["api_key"],
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": provider["model"],
             "max_tokens": 1024,
             "temperature": 0.7,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_text}]
         }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["content"][0]["text"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"Anthropic error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"Anthropic exception: {e}", uid)
+        return None, None
 
-        try:
-            resp = _requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=payload, timeout=30
-            )
+def call_cohere(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://api.cohere.ai/v1/chat"
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": provider["model"],
+            "message": user_text,
+            "preamble": system_prompt,
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["text"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"Cohere error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"Cohere exception: {e}", uid)
+        return None, None
 
-            if resp.status_code == 429:
-                log_warning(f"Rate limit على {model['id']}", uid)
-                next_m = _ai_next_model()
-                if next_m and notify_fn and send_notify:
-                    notify_fn(
-                        f"⚠️ وصل حد النموذج الحالي.\n"
-                        f"🔄 جاري التبديل إلى {next_m['icon']} *{next_m['name']}*..."
-                    )
-                if not next_m:
-                    last_error = "Rate limit exceeded on all models"
-                    break
-                continue
+def call_deepseek(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"DeepSeek error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"DeepSeek exception: {e}", uid)
+        return None, None
 
-            if resp.status_code != 200:
-                log_error(f"OpenRouter {resp.status_code} {resp.text[:200]} on {model['id']}", uid)
-                next_m = _ai_next_model()
-                if not next_m:
-                    last_error = f"HTTP {resp.status_code}"
-                    break
-                if notify_fn and send_notify:
-                    notify_fn(
-                        f"⚠️ فشل النموذج {model['icon']} *{model['name']}*.\n"
-                        f"🔄 جاري التبديل إلى النموذج التالي..."
-                    )
-                continue
+def call_mistral(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://api.mistral.ai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"Mistral error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"Mistral exception: {e}", uid)
+        return None, None
 
-            try:
-                data = resp.json()
-                if "choices" not in data or not data["choices"]:
-                    log_error(f"استجابة غير متوقعة من {model['id']}: {data}", uid)
-                    next_m = _ai_next_model()
-                    continue
-                content = data["choices"][0]["message"]["content"].strip()
-            except (KeyError, AttributeError, TypeError, json.JSONDecodeError) as e:
-                log_error(f"خطأ في تحليل استجابة {model['id']}: {e}", uid)
-                next_m = _ai_next_model()
-                continue
-
-            return content, model
-
-        except Exception as e:
-            log_error(f"استثناء مع {model['id']}: {e}", uid)
-            next_m = _ai_next_model()
-            if not next_m:
-                last_error = str(e)
-                break
-            if notify_fn and send_notify:
-                notify_fn(
-                    f"⚠️ خطأ في النموذج {model['icon']} *{model['name']}*.\n"
-                    f"🔄 جاري التبديل إلى النموذج التالي..."
-                )
-            continue
-
-    log_error(f"فشل جميع نماذج OpenRouter. آخر خطأ: {last_error}", uid)
-    return None, None
+def call_groq(provider, uid, user_text, system_prompt):
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        resp = _requests.post(url, headers=headers, json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            return text, {"id": provider["model"], "name": provider["name"], "icon": provider["icon"]}
+        else:
+            log_error(f"Groq error {resp.status_code}: {resp.text[:200]}", uid)
+            return None, None
+    except Exception as e:
+        log_error(f"Groq exception: {e}", uid)
+        return None, None
 
 def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
-    if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
-        log_error(f"لا يوجد مفتاح AI", uid)
+    if not AI_PROVIDERS:
+        log_error(f"لا يوجد مزود AI نشط", uid)
         return None, None
 
     if uid not in _ai_histories:
@@ -402,11 +612,17 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
         _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
 
+    # بناء system prompt
     data_summary = get_data_summary_for_ai(uid, user_role)
     bot_summary = get_bot_code_summary(uid)
 
     if user_role == "owner":
-        role_desc = "أنت مالك البوت. لديك صلاحيات كاملة: إدارة المستخدمين، تغيير الرتب، تفعيل/تعطيل صلاحية AI، بالإضافة إلى كل صلاحيات الأدمن."
+        role_desc = (
+            "أنت مالك البوت. لديك صلاحيات كاملة: إدارة المستخدمين، تغيير الرتب، "
+            "تفعيل/تعطيل صلاحية AI، بالإضافة إلى كل صلاحيات الأدمن.\n\n"
+            "**ملاحظة مهمة**: يمكنك تنفيذ أي أمر إداري يطلبه منك المالك. "
+            "إذا قال لك 'خذ هذا الملف وأضفه كتعليمات'، يجب عليك تنفيذ ذلك مباشرة."
+        )
     elif user_role == "admin":
         role_desc = "أنت أدمن في البوت. لديك صلاحيات الإضافة والتعديل والحذف على جميع البيانات، ويمكنك إرسال إشعارات ورفع ملفات مباشرة. لا يمكنك رؤية بيانات المستخدمين الآخرين عبر هذه المحادثة."
     else:
@@ -424,13 +640,13 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
             "- أرسل إشعار للجميع: مرحباً\n"
             "- بلغ المستخدم 123456789 يقول له: أهلاً\n"
             "- فعّل AI للمستخدم 123456789\n"
-            "- اجعل 123456789 مالك\n"
             "- أعد تعيين AI - إعادة تعيين نموذج الذكاء الاصطناعي (للمالك فقط)\n"
+            "- أعطني الملف [file_id] - استدعاء ملف عبر معرفه\n"
+            "- أعطني آخر ملف - استدعاء آخر ملف تم رفعه\n"
         )
 
     system_prompt = (
-        AI_SYSTEM_PROMPT_BASE + "\n\n" +
-        role_desc + "\n\n" +
+        AI_SYSTEM_PROMPT_BASE + "\n\n" + role_desc + "\n\n" +
         f"### قاعدة البيانات ###\n{data_summary}\n\n" +
         f"### شرح البوت ###\n{bot_summary}\n\n" +
         admin_note +
@@ -442,31 +658,40 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
         "5. كن دقيقاً ومباشراً."
     )
 
-    # تجربة Gemini أولاً
-    if GEMINI_API_KEY:
-        gemini_response, gemini_model = ask_gemini(uid, user_text, user_role, system_prompt)
-        if gemini_response:
-            _ai_histories[uid].append({"role": "assistant", "content": gemini_response})
-            if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
-                _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
-            return gemini_response, gemini_model
+    # تجربة المزودين بالترتيب
+    for provider in AI_PROVIDERS:
+        if provider["provider"] == "gemini":
+            response, model_info = call_gemini(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "openrouter":
+            response, model_info = call_openrouter(provider, uid, user_text, system_prompt, notify_fn, send_notify)
+        elif provider["provider"] == "nvidia":
+            response, model_info = call_nvidia(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "anthropic":
+            response, model_info = call_anthropic(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "cohere":
+            response, model_info = call_cohere(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "deepseek":
+            response, model_info = call_deepseek(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "mistral":
+            response, model_info = call_mistral(provider, uid, user_text, system_prompt)
+        elif provider["provider"] == "groq":
+            response, model_info = call_groq(provider, uid, user_text, system_prompt)
+        else:
+            continue
 
-    # ثم OpenRouter
-    if OPENROUTER_API_KEY:
-        openrouter_response, openrouter_model = ask_openrouter(uid, user_text, user_role, system_prompt, notify_fn, send_notify)
-        if openrouter_response:
-            _ai_histories[uid].append({"role": "assistant", "content": openrouter_response})
+        if response:
+            _ai_histories[uid].append({"role": "assistant", "content": response})
             if len(_ai_histories[uid]) > _AI_MAX_HISTORY:
                 _ai_histories[uid] = _ai_histories[uid][-_AI_MAX_HISTORY:]
-            return openrouter_response, openrouter_model
+            return response, model_info
 
     return None, None
 
 # ─────────────────────────────────────────────────────
-# دوال مساعدة للشيت (أعمدة محدثة)
+# دوال مساعدة للشيت (الأساسية)
 # ─────────────────────────────────────────────────────
-AI_ALLOWED_COL = 9      # العمود J
-AUTO_PUBLISH_COL = 10   # العمود K
+AI_ALLOWED_COL = 9
+AUTO_PUBLISH_COL = 10
 
 def get_users():
     try:
@@ -709,7 +934,7 @@ def _get_user_name_phone(uid):
     return str(uid), ""
 
 # ─────────────────────────────────────────────────────
-# دوال البيانات من الشيت
+# دوال البيانات من الشيت (محاضرات، تكاليف، إلخ)
 # ─────────────────────────────────────────────────────
 def safe_get(row, idx):
     v = row[idx].strip() if len(row) > idx else ""
@@ -765,6 +990,7 @@ def save_lecture(date, subject, time_val, room):
         new_row[2] = time_val
         new_row[3] = room
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        # إشعار تلقائي
         all_users, _ = get_all_user_ids()
         title = f"🕐 *محاضرة جديدة*"
         message = f"📌 *{subject}*\n📅 {date}\n🕐 {time_val}\n📍 {room}"
@@ -788,6 +1014,7 @@ def save_text_to_cell(date, subject, col, text_val):
         new_row[1] = subject
         new_row[col] = text_val
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        # إشعار تلقائي
         type_name = {4: "تكليف", 6: "ملخص", 7: "تنبيه"}.get(col, "بيانات")
         icon = {4: "📝", 6: "📖", 7: "⚠️"}.get(col, "📌")
         title = f"{icon} *{type_name} جديد*"
@@ -824,6 +1051,7 @@ def save_file_to_cell(date, subject, col, fids, merge=False):
         new_row[1] = subject
         new_row[col] = f"|{','.join(fids)}"
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        # إشعار تلقائي (للملفات)
         type_name = {4: "تكليف", 6: "ملخص"}.get(col, "ملف")
         icon = {4: "📝", 6: "📖"}.get(col, "📎")
         title = f"{icon} *{type_name} جديد (ملف)*"
@@ -945,10 +1173,10 @@ def get_data_summary_for_ai(uid, user_role):
         lines.append("\n### الأوامر الإدارية المتاحة عبر المحادثة ###")
         lines.append("- `أرسل إشعار للجميع: [النص]` - إرسال إشعار لجميع المستخدمين")
         lines.append("- `بلغ المستخدم [ID] يقول له: [النص]` - إرسال إشعار لمستخدم محدد")
-        lines.append("- `فعّل AI للمستخدم [ID]` - تفعيل الذكاء الاصطناعي لمستخدم")
-        lines.append("- `عطّل AI للمستخدم [ID]` - تعطيل الذكاء الاصطناعي لمستخدم")
-        lines.append("- `اجعل [ID] مالك/أدمن/مستخدم` - تغيير رتبة مستخدم")
-        lines.append("- `أضف مستخدم [الاسم] ID [ID]` - إضافة مستخدم جديد")
+        lines.append("- `فعّل AI للمستخدم [ID]` - تفعيل الذكاء الاصطناعي لمستخدم (للمالك فقط)")
+        lines.append("- `عطّل AI للمستخدم [ID]` - تعطيل الذكاء الاصطناعي لمستخدم (للمالك فقط)")
+        lines.append("- `اجعل [ID] أدمن/مستخدم` - تغيير رتبة مستخدم (للمالك فقط)")
+        lines.append("- `أضف مستخدم [الاسم] ID [ID]` - إضافة مستخدم جديد (للمالك فقط)")
         lines.append("- `أضف محاضرة [المادة] تاريخ [DD/MM/YYYY] وقت [HH:MM-HH:MM] قاعة [القاعة]`")
         lines.append("- `أضف تكليف [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
         lines.append("- `أضف ملخص [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
@@ -956,6 +1184,8 @@ def get_data_summary_for_ai(uid, user_role):
         lines.append("- `أضف تنبيه [المادة] تاريخ [DD/MM/YYYY] نص: [النص]`")
         lines.append("- `احذف [محاضرة/تكليف/ملخص/تنبيه] [المادة] تاريخ [DD/MM/YYYY]`")
         lines.append("- `أعد تعيين AI` - إعادة تعيين نموذج الذكاء الاصطناعي (للمالك فقط)")
+        lines.append("- `أعطني الملف [file_id]` - استدعاء ملف عبر معرفه (للمالك فقط)")
+        lines.append("- `أعطني آخر ملف` - استدعاء آخر ملف تم رفعه (للمالك فقط)")
 
     return "\n".join(lines)
 
@@ -1068,7 +1298,7 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
 
     row_switches = []
-    if OPENROUTER_API_KEY or GEMINI_API_KEY:
+    if AI_PROVIDERS:  # يوجد مزود AI نشط
         load_user_auto_publish(uid)
         pub_status = "📢" if user_auto_publish.get(uid, False) else "🔕"
         row_switches.append(f"{pub_status} {bt('زر_نشر_تلقائي', uid)}")
@@ -1251,7 +1481,7 @@ def get_settings():
     return bt("رسالة_الترحيب"), bt("رسالة_الرفض")
 
 # ─────────────────────────────────────────────────────
-# دوال الأوامر الإدارية النصية
+# دوال الأوامر الإدارية النصية (محسنة للغة الطبيعية)
 # ─────────────────────────────────────────────────────
 def normalize_name(text):
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
@@ -1335,21 +1565,144 @@ def notify_auto_publish(title, message, file_ids=None):
     if success > 0:
         log_info(f"إشعارات تلقائية: {success} نجاح, {fail} فشل")
 
+def log_data_addition(adder_uid, item_type, details):
+    """إرسال تقرير إلى بوت اللوج عند إضافة بيانات"""
+    if not LOG_BOT_TOKEN:
+        return
+    name, phone = _get_user_name_phone(adder_uid)
+    role_icon = _get_role_icon(adder_uid)
+    msg = (f"📝 *إضافة {item_type}*\n"
+           f"👤 {name} (ID: `{adder_uid}`)\n"
+           f"📌 {details}")
+    try:
+        _requests.post(
+            f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
+            json={"chat_id": LOG_BOT_TOKEN, "text": msg, "parse_mode": "Markdown"},
+            timeout=5
+        )
+    except:
+        pass
+
+def send_or_update_log(user_id, user_name, phone, role, ai_status, actor):
+    """إرسال أو تحديث بطاقة المستخدم في بوت اللوج (بدون أزرار)"""
+    if not LOG_BOT_TOKEN:
+        return
+    icon = {"مالك": "👑", "أدمن": "⭐", "مستخدم": "👤", "غير مصرح": "❌"}.get(role, "❌")
+    ai_icon = "🤖" if ai_status == "مفعل" else "🚫"
+    ph = f"\n📞 `{phone}`" if phone else ""
+    text = (f"{icon} *{user_name}*\n🆔 `{user_id}`{ph}\n{ai_icon} AI: {ai_status}\n{'─' * 23}\n"
+            f"🔧 {actor}")
+
+    try:
+        if user_id in _log_messages:
+            old = _log_messages[user_id]
+            bot.edit_message_text(text, old["chat_id"], old["message_id"], parse_mode="Markdown")
+        else:
+            msg = bot.send_message(LOG_BOT_TOKEN, text, parse_mode="Markdown")
+            _log_messages[user_id] = {"chat_id": LOG_BOT_TOKEN, "message_id": msg.message_id}
+    except Exception as e:
+        log_error(f"فشل إرسال/تحديث اللوج للمستخدم {user_id}: {e}")
+
+def get_last_file_id_from_log():
+    """جلب آخر file_id من رسائل بوت اللوج"""
+    if not LOG_BOT_TOKEN:
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/getUpdates"
+        params = {"limit": 50}
+        resp = _requests.get(url, params=params, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not data.get("ok"):
+            return None
+        for update in reversed(data.get("result", [])):
+            if "message" not in update:
+                continue
+            msg = update["message"]
+            text = msg.get("text", "")
+            if "نايف" in text:
+                match = re.search(r'🆔 `([^`]+)`', text)
+                if match:
+                    return match.group(1)
+        return None
+    except Exception as e:
+        log_error(f"get_last_file_id_from_log: {e}")
+        return None
+
+def get_file_id_from_log(keyword):
+    """البحث عن file_id في سجل اللوج باستخدام كلمة مفتاحية"""
+    if not LOG_BOT_TOKEN:
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/getUpdates"
+        params = {"limit": 100}
+        resp = _requests.get(url, params=params, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not data.get("ok"):
+            return None
+        for update in reversed(data.get("result", [])):
+            if "message" not in update:
+                continue
+            msg = update["message"]
+            text = msg.get("text", "")
+            if "نايف" in text and keyword in text:
+                match = re.search(r'🆔 `([^`]+)`', text)
+                if match:
+                    return match.group(1)
+        return None
+    except Exception as e:
+        log_error(f"get_file_id_from_log: {e}")
+        return None
+
+def get_help_file_id(key, file_type="photo"):
+    """استرجاع file_id من صفحة المساعدة حسب المفتاح"""
+    try:
+        rows = help_sheet.get_all_values()
+        for row in rows:
+            if len(row) >= 3 and row[0].strip() == key and row[2].strip() == file_type:
+                return row[1].strip()
+        return None
+    except Exception as e:
+        log_error(f"get_help_file_id: {e}")
+        return None
+
 def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
     if user_role not in ("admin", "owner"):
         return False, None
 
     text = text.strip()
 
+    # كشف النص الذي يحتوي على عناوين مرقمة مثل "١/ ... ٢/ ..."
+    pattern_multi = r'(\d+[\/\-\–]\s*[^\n]+(?:\n[^\d].*)*)'
+    matches = re.findall(pattern_multi, text)
+    if len(matches) > 1:
+        short_key = f"multi_{int(time.time())}_{uid}"
+        _temp_admin_actions[short_key] = {
+            "uid": uid,
+            "data": matches,
+            "original": text,
+            "expires": time.time() + 300
+        }
+        preview = "\n".join([f"📌 {item.strip()}" for item in matches])
+        markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+        markup.add(
+            telebot.types.InlineKeyboardButton("✅ إرسال", callback_data=f"confirm_multi_{short_key}"),
+            telebot.types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_multi_{short_key}"),
+            telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_multi_{short_key}"),
+        )
+        return True, f"📋 *سيتم إضافة البيانات التالية:*\n\n{preview}\n\nهل تريد المتابعة؟", markup
+
     # إعادة تعيين نموذج AI
     pattern_reset_ai = r'(?:أعد|إعادة)?\s*تعيين\s*(?:نموذج)?\s*(?:الذكاء الاصطناعي|AI|النموذج)|ai_reset'
     m = re.search(pattern_reset_ai, text, re.IGNORECASE)
     if m:
         if user_role != "owner":
-            return True, "⛔ هذا الأمر متاح للمالك فقط."
+            return True, "⛔ هذا الأمر يتطلب صلاحية المالك."
         ai_reset_model()
-        current_model = _ai_model()
-        return True, f"✅ تم إعادة تعيين نموذج الذكاء الاصطناعي إلى {current_model['icon']} *{current_model['name']}*"
+        return True, f"✅ تم إعادة تعيين نموذج الذكاء الاصطناعي."
 
     # إرسال إشعار لمستخدم محدد
     pattern_broadcast_user = r'(?:أرسل إشعار للمستخدم|بلغ|أرسل إشعار لـ?)\s*(\d+)\s*(?:(?:يقول له|النص:?)\s*(.+))?'
@@ -1406,6 +1759,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         if not is_valid_date(date_str):
             return True, f"❌ التاريخ '{date_str}' غير صحيح. استخدم صيغة DD/MM/YYYY أو رقم اليوم فقط"
         if save_lecture(date_str, subject, time_val, room):
+            log_data_addition(uid, "محاضرة", f"{subject} - {date_str}")
             return True, f"✅ تم إضافة المحاضرة:\n📌 {subject}\n📅 {date_str}\n🕐 {time_val}\n📍 {room}"
         return True, "❌ حدث خطأ أثناء الإضافة"
 
@@ -1419,6 +1773,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         if not is_valid_date(date):
             return True, "❌ التاريخ غير صحيح."
         if save_text_to_cell(date, subject, 4, task_text):
+            log_data_addition(uid, "تكليف", f"{subject} - {date}")
             return True, f"✅ تم إضافة التكليف:\n📌 {subject}\n📅 {date}\n📝 {task_text}"
         return True, "❌ خطأ في الحفظ"
 
@@ -1432,6 +1787,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         if not is_valid_date(date):
             return True, "❌ التاريخ غير صحيح."
         if save_text_to_cell(date, subject, 6, summary_text):
+            log_data_addition(uid, "ملخص", f"{subject} - {date}")
             return True, f"✅ تم إضافة الملخص:\n📌 {subject}\n📅 {date}\n📖 {summary_text}"
         return True, "❌ خطأ في الحفظ"
 
@@ -1450,10 +1806,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
                 break
         if not updated:
             sheet.append_row(["", subject, "", "", "", price, "", ""], value_input_option="USER_ENTERED")
-        all_users, _ = get_all_user_ids()
-        title = f"💰 *سعر جديد*"
-        message = f"📌 *{subject}*\n💰 {price}"
-        notify_auto_publish(title, message)
+        log_data_addition(uid, "سعر", f"{subject} - {price}")
         return True, f"✅ تم تحديث سعر مادة {subject} إلى {price}"
 
     # إضافة تنبيه
@@ -1466,6 +1819,7 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         if not is_valid_date(date):
             return True, "❌ التاريخ غير صحيح."
         if save_text_to_cell(date, subject, 7, alert_text):
+            log_data_addition(uid, "تنبيه", f"{subject} - {date}")
             return True, f"✅ تم إضافة التنبيه:\n📌 {subject}\n📅 {date}\n⚠️ {alert_text}"
         return True, "❌ خطأ في الحفظ"
 
@@ -1486,20 +1840,19 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         else:
             return True, "النوع غير معروف."
 
-    # تغيير رتبة مستخدم
-    pattern_change_role = r'(?:اجعل|حول|غير)\s*(?:المستخدم)?\s*(\d+)\s*(مالك|أدمن|مستخدم)'
+    # تغيير رتبة مستخدم (للمالك فقط)
+    pattern_change_role = r'(?:اجعل|حول|غير)\s*(?:المستخدم)?\s*(\d+)\s*(أدمن|مستخدم)'
     m = re.search(pattern_change_role, text, re.IGNORECASE)
     if m:
+        if user_role != "owner":
+            return True, "⛔ هذا الأمر يتطلب صلاحية المالك."
         target_uid = int(m.group(1))
         target_role = m.group(2).strip()
         try:
             rows = users_sheet.get_all_values()
             for i, row in enumerate(rows[1:], start=2):
                 if len(row) > 2 and row[2].strip().lstrip("'") == str(target_uid):
-                    if target_role == "مالك":
-                        users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
-                        role_name = "مالك"
-                    elif target_role == "أدمن":
+                    if target_role == "أدمن":
                         users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
                         role_name = "أدمن"
                     else:
@@ -1511,16 +1864,19 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
                         bot_instance.send_message(target_uid, f"✅ تم تغيير رتبتك إلى {role_name}")
                     except:
                         pass
+                    update_user_card_in_chat(target_uid, chat_id)
                     return True, f"✅ تم تغيير رتبة المستخدم {name} إلى {role_name}"
             return True, f"❌ لم أجد المستخدم {target_uid}"
         except Exception as e:
             log_error(f"change_role: {e}")
             return True, "❌ حدث خطأ أثناء تغيير الرتبة"
 
-    # تفعيل/تعطيل AI لمستخدم
+    # تفعيل/تعطيل AI لمستخدم (للمالك فقط)
     pattern_toggle_ai = r'(?:فعّل|عطّل|تفعيل|تعطيل)\s*AI\s*(?:للمستخدم)?\s*(\d+)'
     m = re.search(pattern_toggle_ai, text, re.IGNORECASE)
     if m:
+        if user_role != "owner":
+            return True, "⛔ هذا الأمر يتطلب صلاحية المالك."
         target_uid = int(m.group(1))
         is_enable = "فعّل" in text or "تفعيل" in text
         if set_ai_allowed(target_uid, is_enable):
@@ -1531,14 +1887,18 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
                 bot_instance.send_message(target_uid, msg)
             except:
                 pass
+            notify_owners_action(target_uid, name, "", f"أمر من {uid}", "ai_enabled" if is_enable else "ai_disabled")
+            update_user_card_in_chat(target_uid, chat_id)
             return True, f"✅ تم {status} AI للمستخدم {name} (ID: {target_uid})"
         else:
             return True, f"❌ فشل تغيير صلاحية AI للمستخدم {target_uid}"
 
-    # إضافة مستخدم جديد
+    # إضافة مستخدم جديد (للمالك فقط)
     pattern_add_user = r'(?:أضف|إضافة)\s*مستخدم\s*(.+?)(?:\s+ID\s*(\d+))?'
     m = re.search(pattern_add_user, text, re.IGNORECASE)
     if m:
+        if user_role != "owner":
+            return True, "⛔ هذا الأمر يتطلب صلاحية المالك."
         name = m.group(1).strip()
         uid_str = m.group(2) if m.group(2) else ""
         if uid_str and uid_str.isdigit():
@@ -1547,13 +1907,82 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
             if row:
                 return True, f"⚠️ المستخدم {new_uid} موجود بالفعل."
             if add_user_to_sheet(name, new_uid, auto=False, allowed=True):
+                notify_owners_action(new_uid, name, "", f"أمر من {uid}", "approve")
                 return True, f"✅ تم إضافة المستخدم {name} (ID: {new_uid}) بنجاح."
             else:
                 return True, "❌ حدث خطأ أثناء إضافة المستخدم."
         else:
             return False, "❌ يجب إدخال ID صحيح. مثال: أضف مستخدم أحمد 123456789"
 
+    # استدعاء ملف عبر file_id مباشرة (للمالك فقط)
+    pattern_file_by_id = r'(?:أعطني|ابعتلي|أرسل)\s*الملف\s*[`]?([a-zA-Z0-9_\-]+)[`]?'
+    m = re.search(pattern_file_by_id, text, re.IGNORECASE)
+    if m:
+        if user_role != "owner":
+            return True, "⚠️ لا يوجد ملف بهذا الاسم."
+        file_id = m.group(1).strip()
+        if file_id:
+            try:
+                _try_send_file(chat_id, file_id, caption="📎 الملف المطلوب")
+                return True, f"✅ تم إرسال الملف"
+            except:
+                return True, f"❌ فشل إرسال الملف"
+        else:
+            return True, "⚠️ لا يوجد ملف بهذا الاسم."
+
+    # استدعاء آخر ملف في بوت اللوج (للمالك فقط)
+    pattern_last_file = r'(?:أعطني|ابعتلي|أرسل)\s*(?:آخر|اخر)\s*(?:ملف|صورة|فيديو)'
+    m = re.search(pattern_last_file, text, re.IGNORECASE)
+    if m:
+        if user_role != "owner":
+            return True, "⚠️ لا يوجد ملف بهذا الاسم."
+        file_id = get_last_file_id_from_log()
+        if file_id:
+            try:
+                _try_send_file(chat_id, file_id, caption="📎 آخر ملف مرفوع")
+                return True, f"✅ تم إرسال آخر ملف"
+            except:
+                return True, f"❌ فشل إرسال الملف"
+        else:
+            return True, "⚠️ لا يوجد ملفات في سجل اللوج"
+
+    # استدعاء ملف عبر الكلمة المفتاحية (للمالك فقط)
+    pattern_get_by_keyword = r'(?:أعطني|ابعتلي|أرسل)\s*(?:الملف|الصورة|الفيديو)\s*(.+)'
+    m = re.search(pattern_get_by_keyword, text, re.IGNORECASE)
+    if m:
+        if user_role != "owner":
+            return True, "⚠️ لا يوجد ملف بهذا الاسم."
+        keyword = m.group(1).strip()
+        # البحث في القاموس المحلي أولاً
+        if keyword in _naif_files:
+            file_id = _naif_files[keyword]
+            try:
+                _try_send_file(chat_id, file_id, caption=f"📎 الملف المطلوب: {keyword}")
+                return True, f"✅ تم إرسال الملف: {keyword}"
+            except:
+                return True, f"❌ فشل إرسال الملف"
+        # البحث في بوت اللوج
+        file_id = get_file_id_from_log(keyword)
+        if file_id:
+            _naif_files[keyword] = file_id
+            try:
+                _try_send_file(chat_id, file_id, caption=f"📎 الملف المطلوب: {keyword}")
+                return True, f"✅ تم إرسال الملف: {keyword}"
+            except:
+                return True, f"❌ فشل إرسال الملف"
+        else:
+            return True, f"⚠️ لا يوجد ملف بهذا الاسم."
+
     return False, None
+
+def update_user_card_in_chat(user_id, chat_id):
+    """تحديث بطاقة المستخدم في الدردشة المحددة إذا كانت موجودة"""
+    if user_id in _user_card_messages:
+        old = _user_card_messages[user_id]
+        if old["chat_id"] == chat_id:
+            _, row = find_user_row_by_id(user_id)
+            if row:
+                send_user_card(chat_id, row, edit_existing=True)
 
 def smart_date_from_day(day):
     now = datetime.now(YEMEN_TZ)
@@ -1605,7 +2034,12 @@ def send_files_with_text(chat_id, text, fids, reply_markup=None):
 # دوال التسجيلات الصوتية
 # ─────────────────────────────────────────────────────
 def transcribe_voice(file_id, lang="ar"):
-    if not OPENROUTER_API_KEY:
+    openrouter_key = None
+    for p in AI_PROVIDERS:
+        if p["provider"] == "openrouter":
+            openrouter_key = p["api_key"]
+            break
+    if not openrouter_key:
         return None
     try:
         file_info = bot.get_file(file_id)
@@ -1615,7 +2049,7 @@ def transcribe_voice(file_id, lang="ar"):
         if response.status_code != 200:
             log_error(f"فشل تحميل الملف الصوتي: {response.status_code}")
             return None
-        headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+        headers = {"Authorization": f"Bearer {openrouter_key}"}
         files = {
             "file": (file_path, response.content),
             "model": (None, "whisper-1"),
@@ -1652,12 +2086,10 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
         "requester_name": requester_name,
         "phone": phone,
     }
-    
     ph = f"\n📞 `{phone}`" if phone else ""
     text = (f"👤 *طلب انضمام جديد*\n━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 {requester_name}\n🆔 `{requester_id}`{ph}\n"
             f"━━━━━━━━━━━━━━━━━━━━")
-    
     markup = telebot.types.InlineKeyboardMarkup(row_width=3)
     markup.row(
         telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"approve_role_owner_{short_key}"),
@@ -1669,7 +2101,6 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
         telebot.types.InlineKeyboardButton("🤖 تفعيل AI", callback_data=f"approve_ai_on_{short_key}"),
         telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{short_key}"),
     )
-    
     if requester_id not in request_msg_ids:
         request_msg_ids[requester_id] = {}
     for oid in owners:
@@ -1680,6 +2111,7 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
             pass
 
 def notify_owners_action(target_id, target_name, phone, actor, action):
+    # منع التكرار
     notification_key = f"{target_id}_{action}_{actor}"
     now = time.time()
     if notification_key in _last_notifications:
@@ -1691,44 +2123,32 @@ def notify_owners_action(target_id, target_name, phone, actor, action):
             if now - _last_notifications[key] > 3600:
                 del _last_notifications[key]
 
-    EVENT = {
-        "approve": ("✅", "تمت الموافقة على طلب الانضمام"),
-        "reject": ("❌", "تم رفض طلب الانضمام"),
-        "remove": ("🚫", "تم إلغاء صلاحية المستخدم"),
-        "set_user": ("🔄", "تم تعيين دور مستخدم عادي"),
-        "set_admin": ("⭐", "تم الترقية إلى أدمن"),
-        "set_owner": ("👑", "تم الترقية إلى مالك"),
-        "downgrade_owner": ("⬇️", "تم تخفيض رتبة المالك → مستخدم"),
-        "downgrade_owner_to_user": ("⬇️", "تم تخفيض رتبة المالك → مستخدم"),
-        "downgrade_admin": ("⬇️", "تم تخفيض رتبة الأدمن → مستخدم"),
-        "ai_enabled": ("🤖", "تم تفعيل المساعد الذكي"),
-        "ai_disabled": ("🚫", "تم تعطيل المساعد الذكي"),
-    }
-    icon, title = EVENT.get(action, ("🔔", action))
-    if actor == "الشيت":
-        actor_line = "📊 تعديل مباشر في الشيت"
-    elif actor == "الكود السري":
-        actor_line = "🔑 استخدام الكود السري"
+    # تحديد إذا كان الفاعل هو المالك نفسه (من خلال البوت) → لا نرسل إشعار
+    is_external = (actor in ("الشيت", "الكود السري") or actor.startswith("أمر من"))
+    if not is_external:
+        return
+
+    # هنا التغيير خارجي (شيت أو كود سري) → نرسل إلى بوت اللوج فقط
+    _, row = find_user_row_by_id(target_id)
+    if row:
+        name = row[0].strip()
+        phone = row[1].strip() if len(row) > 1 else ""
+        allowed = (row[3].strip().upper() if len(row) > 3 else "FALSE") == "TRUE"
+        admin = (row[4].strip().upper() if len(row) > 4 else "FALSE") == "TRUE"
+        owner = (row[5].strip().upper() if len(row) > 5 else "FALSE") == "TRUE"
+        ai_allowed = (row[AI_ALLOWED_COL].strip().upper() if len(row) > AI_ALLOWED_COL else "FALSE") == "TRUE"
+        if owner:
+            role = "مالك"
+        elif admin:
+            role = "أدمن"
+        elif allowed:
+            role = "مستخدم"
+        else:
+            role = "غير مصرح"
+        ai_status = "مفعل" if ai_allowed else "معطل"
+        send_or_update_log(target_id, name, phone, role, ai_status, actor)
     else:
-        actor_line = f"👤 {actor}"
-    ph = f"\n📞 `{phone}`" if phone else ""
-    msg = (f"{icon} *{title}*\n━━━━━━━━━━━━━━━━━━━━\n"
-           f"👤 {target_name}\n🆔 `{target_id}`{ph}\n━━━━━━━━━━━━━━━━━━━━\n🔧 {actor_line}")
-    owners = get_owner_ids()
-    if action in ("approve", "reject"):
-        msg_ids = request_msg_ids.pop(target_id, {})
-        for oid in owners:
-            mid = msg_ids.get(oid)
-            if mid:
-                try:
-                    bot.delete_message(oid, mid)
-                except:
-                    pass
-    for oid in owners:
-        try:
-            bot.send_message(oid, msg, parse_mode="Markdown")
-        except:
-            pass
+        log_error(f"لم أجد المستخدم {target_id} لإرسال التقرير")
 
 # ─────────────────────────────────────────────────────
 # دوال عرض النتائج
@@ -1984,7 +2404,7 @@ def _watch_sheet_loop():
 # ─────────────────────────────────────────────────────
 # دوال بطاقة المستخدم وعرض جميع المستخدمين
 # ─────────────────────────────────────────────────────
-def send_user_card(chat_id, row):
+def send_user_card(chat_id, row, edit_existing=False):
     name = row[0].strip() if row else ""
     uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
     phone = row[1].strip() if len(row) > 1 else ""
@@ -2012,19 +2432,32 @@ def send_user_card(chat_id, row):
 
     text = f"{role_icon} *{name}*\n🆔 `{uid_str}`{ph_line}\n{ai_icon} AI: {ai_status}\n{'─' * 23}"
 
-    markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+    # الأزرار: صفين (تم إزالة زر المالك)
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    
+    # الصف الأول: أزرار الرتب (أدمن فقط + مستخدم)
     markup.row(
-        telebot.types.InlineKeyboardButton("👑 مالك", callback_data=f"role_owner_{uid_str}"),
         telebot.types.InlineKeyboardButton("⭐ أدمن", callback_data=f"role_admin_{uid_str}"),
         telebot.types.InlineKeyboardButton("👤 مستخدم", callback_data=f"role_user_{uid_str}"),
     )
+    
+    # الصف الثاني: تفعيل/تعطيل AI + تغيير الاسم
     ai_button_text = "🚫 تعطيل AI" if ai_val == "TRUE" else "🤖 تفعيل AI"
     markup.row(
         telebot.types.InlineKeyboardButton(ai_button_text, callback_data=f"ai_{'off' if ai_val == 'TRUE' else 'on'}_{uid_str}"),
         telebot.types.InlineKeyboardButton("✏️ تغيير الاسم", callback_data=f"rename_{uid_str}"),
     )
 
-    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+    if edit_existing and int(uid_str) in _user_card_messages:
+        old = _user_card_messages[int(uid_str)]
+        if old["chat_id"] == chat_id:
+            try:
+                bot.edit_message_text(text, old["chat_id"], old["message_id"], parse_mode="Markdown", reply_markup=markup)
+                return
+            except:
+                pass
+    msg = bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+    _user_card_messages[int(uid_str)] = {"chat_id": chat_id, "message_id": msg.message_id}
 
 def format_all_users_message():
     try:
@@ -2289,6 +2722,32 @@ def parse_date_range(raw):
         return smart_date_from_day(int(m2.group(1))), smart_date_from_day(int(m2.group(2)))
     return None, None
 
+def save_file_to_cell(date, subject, col, fids, merge=False):
+    try:
+        fids = fids if isinstance(fids, list) else [fids]
+        rows = sheet.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
+                current = safe_get(row, col)
+                all_fids = (get_file_ids(current) + fids) if merge else fids
+                sheet.update_cell(i, col + 1, merge_cell(get_text(current), all_fids))
+                return True
+        new_row = [""] * 8
+        new_row[0] = date
+        new_row[1] = subject
+        new_row[col] = f"|{','.join(fids)}"
+        sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        log_error(f"save_file_to_cell: {e}")
+        return False
+
+def merge_cell(text, fids):
+    if not fids:
+        return text
+    fids_str = ",".join(fids) if isinstance(fids, list) else fids
+    return f"{text}|{fids_str}" if fids_str else text
+
 def normalize_digits(text):
     return text.translate(ARABIC_DIGITS)
 
@@ -2375,7 +2834,6 @@ def set_bot_commands():
     bot.set_my_commands(commands)
 
 def send_typing_animation(chat_id, uid, duration=2):
-    """إرسال رسالة متحركة: نايف يكتب . → نايف يكتب .. → نايف يكتب ... ثم تختفي"""
     base_text = bt("رسالة_نايف_يكتب", uid)
     msg = bot.send_message(chat_id, f"{base_text} .")
     frames = [" .", " ..", " ..."]
@@ -2417,31 +2875,85 @@ def start_message(message):
     if not is_allowed:
         if not is_pending(uid):
             pending_requests.add(uid)
-        bot.send_message(message.chat.id, rejection)
-        cm = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        cm.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
-        bot.send_message(message.chat.id, "📲 شارك جهة اتصالك:", reply_markup=cm)
+
+        inline_markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+        inline_markup.add(telebot.types.InlineKeyboardButton(
+            "📱 مشاركة رقمي الآن", callback_data="request_contact"
+        ))
+
+        caption = (
+            "⛔ *غير مسموح لك باستخدام البوت*\n\n"
+            "للحصول على الصلاحية، يرجى مشاركة رقم هاتفك.\n"
+            "اضغط على الزر أدناه لبدء العملية."
+        )
+
+        help_image_id = get_help_file_id("help_request_photo", "photo")
+        if help_image_id:
+            try:
+                bot.send_photo(
+                    message.chat.id,
+                    help_image_id,
+                    caption=caption,
+                    parse_mode="Markdown",
+                    reply_markup=inline_markup
+                )
+            except Exception as e:
+                log_error(f"فشل إرسال الصورة: {e}")
+                bot.send_message(
+                    message.chat.id,
+                    caption,
+                    parse_mode="Markdown",
+                    reply_markup=inline_markup
+                )
+        else:
+            bot.send_message(
+                message.chat.id,
+                caption,
+                parse_mode="Markdown",
+                reply_markup=inline_markup
+            )
         return
+
     user_state.pop(uid, None)
     admin = admin_all or uid in admins
     owner = uid in owners
     log_info("START", uid)
     bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
 
+@bot.callback_query_handler(func=lambda call: call.data == "request_contact")
+def handle_request_contact_confirm(call):
+    uid = call.from_user.id
+    load_user_lang(uid)
+    bot.answer_callback_query(call.id, "📱 جاري تحضير زر المشاركة...")
+    keyboard = telebot.types.ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        one_time_keyboard=True,
+        row_width=1
+    )
+    keyboard.add(telebot.types.KeyboardButton("📱 مشاركة رقم هاتفي الآن", request_contact=True))
+    bot.send_message(
+        call.message.chat.id,
+        "✅ *تم اختيار مشاركة الرقم!*\n\n"
+        "اضغط على الزر الكبير أدناه لمشاركة رقم هاتفك مع المالك.\n"
+        "سيتم إرسال طلب انضمام تلقائياً.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     uid = message.from_user.id
-    if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
+    if not AI_PROVIDERS:
         bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
         return
     if not is_ai_allowed(uid):
         bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
         return
     user_ai_enabled[uid] = True
-    m = _ai_model() if OPENROUTER_API_KEY else {"icon": "✨", "name": "Gemini 2.0 Flash"}
+    default_model = AI_PROVIDERS[0] if AI_PROVIDERS else {"icon": "❌", "name": "غير متاح"}
     bot.send_message(
         message.chat.id,
-        bt("رسالة_ai_ترحيب", uid).format(model=f"{m['icon']} {m['name']}"),
+        bt("رسالة_ai_ترحيب", uid).format(model=f"{default_model['icon']} {default_model['name']}"),
         parse_mode="Markdown",
         reply_markup=main_menu(uid)
     )
@@ -2452,9 +2964,9 @@ def ai_reset_command(message):
     if not is_owner_id(uid):
         bot.send_message(message.chat.id, "⛔ هذا الأمر متاح للمالك فقط.")
         return
-    ai_reset_model()
-    m = _ai_model() if OPENROUTER_API_KEY else {"icon": "✨", "name": "Gemini 2.0 Flash"}
-    bot.send_message(message.chat.id, f"✅ تمت إعادة تعيين النموذج إلى {m['icon']} *{m['name']}*", parse_mode="Markdown")
+    global _ai_histories
+    _ai_histories.pop(uid, None)
+    bot.send_message(message.chat.id, "✅ تم إعادة تعيين سياق المحادثة والنموذج إلى الأول.")
 
 @bot.message_handler(commands=['ai_clear'])
 def ai_clear_command(message):
@@ -2528,11 +3040,66 @@ def handle_file(message):
     if not (open_all or uid in allowed):
         bot.send_message(message.chat.id, rejection)
         return
-    
-    # إذا كان صوت و AI مفعلاً، لا نتعامل معه هنا
-    if message.content_type == 'voice' and user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
+
+    # ========== ميزة نايف: إرسال file_id إلى اللوج والتوقف ==========
+    caption = message.caption or ""
+    if "نايف" in caption:
+        if message.document:
+            file_id = message.document.file_id
+            file_type = "مستند"
+        elif message.photo:
+            file_id = message.photo[-1].file_id
+            file_type = "صورة"
+        elif message.video:
+            file_id = message.video.file_id
+            file_type = "فيديو"
+        elif message.audio:
+            file_id = message.audio.file_id
+            file_type = "صوت"
+        elif message.voice:
+            file_id = message.voice.file_id
+            file_type = "تسجيل صوتي"
+        else:
+            bot.send_message(message.chat.id, "⚠️ نوع الملف غير مدعوم")
+            return
+
+        # استخراج كلمة مفتاحية من النص (آخر كلمة بعد نايف)
+        words = caption.split()
+        keyword = None
+        if len(words) > 1:
+            keyword = words[-1]
+            _naif_files[keyword] = file_id
+
+        name, phone = _get_user_name_phone(uid)
+        log_msg = (
+            f"🤖 *نايف*\n"
+            f"📎 *{file_type}*\n"
+            f"🆔 `{file_id}`\n"
+            f"👤 {name} (ID: `{uid}`)\n"
+            f"📝 النص: `{caption[:100]}`"
+        )
+        if keyword:
+            log_msg += f"\n📌 الكلمة المفتاحية: `{keyword}`"
+
+        try:
+            _requests.post(
+                f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
+                json={"chat_id": LOG_BOT_TOKEN, "text": log_msg, "parse_mode": "Markdown"},
+                timeout=5
+            )
+            bot.send_message(
+                message.chat.id,
+                "✅ تم إرسال الملف إلى المالك بنجاح.\n\n"
+                "📌 يمكنك الآن استخدام الأمر:\n"
+                f"`أعطني الملف {keyword or file_id}` لاستدعاء هذا الملف.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            log_error(f"❌ فشل إرسال file_id إلى اللوج: {e}", uid)
+            bot.send_message(message.chat.id, "❌ حدث خطأ أثناء إرسال الملف.")
         return
-    
+    # ====================================================
+
     auto_register_user(message, open_all=open_all)
     f_admin = admin_all or uid in admins
     f_owner = uid in owners
@@ -2682,30 +3249,42 @@ def handle_message(message):
 
     # معالجة الأزرار (تكون أولوية، لكن نتجاهلها إذا كان النص من الصوت)
     if text in BUTTON_TEXTS and not from_voice:
-        pass  # نستمر للمعالجة العادية
-    # معالجة AI (إذا كان مفعلاً)
+        pass
+    # معالجة AI (إذا كان مفعلاً وليس في منتصف flow)
     elif user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
-        user_role = get_user_role(uid)
-        executed, cmd_response = try_execute_admin_command(text, uid, user_role, message.chat.id, bot)
-        if executed:
-            bot.send_message(message.chat.id, cmd_response, reply_markup=main_menu(uid, admin=admin, owner=owner))
-            return
-
-        bot.send_chat_action(message.chat.id, "typing")
-
-        def _notify(msg):
-            if admin or owner:
-                bot.send_message(message.chat.id, msg, parse_mode="Markdown")
-
-        response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=_notify, send_notify=(owner or admin))
-        if response:
-            send_typing_animation(message.chat.id, uid, duration=min(len(response) * 0.03, 2.5))
-            bot.send_message(message.chat.id, response, parse_mode="Markdown",
-                             reply_markup=main_menu(uid, admin=admin, owner=owner))
+        in_flow = bool(state) and not (len(state) == 1 and "subject" in state)
+        if in_flow:
+            pass
         else:
-            bot.send_message(message.chat.id, bt("رسالة_ai_فشل", uid),
-                             reply_markup=main_menu(uid, admin=admin, owner=owner))
-        return
+            user_role = get_user_role(uid)
+            typing_msg = bot.send_message(message.chat.id, f"{bt('رسالة_نايف_يكتب', uid)} ...")
+            def animate_typing():
+                frames = [" .", " ..", " ..."]
+                i = 0
+                start = time.time()
+                while time.time() - start < 8:
+                    try:
+                        bot.edit_message_text(f"{bt('رسالة_نايف_يكتب', uid)}{frames[i % len(frames)]}",
+                                              message.chat.id, typing_msg.message_id)
+                        i += 1
+                        time.sleep(0.3)
+                    except:
+                        break
+            threading.Thread(target=animate_typing, daemon=True).start()
+            def run_ai():
+                response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=None, send_notify=(owner or admin))
+                try:
+                    bot.delete_message(message.chat.id, typing_msg.message_id)
+                except:
+                    pass
+                if response:
+                    bot.send_message(message.chat.id, response, parse_mode="Markdown",
+                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+                else:
+                    bot.send_message(message.chat.id, bt("رسالة_ai_فشل", uid),
+                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
+            threading.Thread(target=run_ai, daemon=True).start()
+            return
 
     # التحقق من كتابة نص بدون AI مفعل
     elif text and text not in BUTTON_TEXTS and not user_ai_enabled.get(uid, False):
@@ -2731,7 +3310,6 @@ def handle_message(message):
         return
 
     # ========== باقي معالجة البوت العادي ==========
-    # معالجة تغيير الاسم أثناء طلب الانضمام
     if state.get("awaiting_rename_for_approval"):
         short_key = state["awaiting_rename_for_approval"]
         req_data = _approval_store.get(short_key)
@@ -2739,17 +3317,14 @@ def handle_message(message):
             user_state.pop(uid, None)
             bot.send_message(message.chat.id, "⚠️ انتهت صلاحية الطلب")
             return
-        
         new_name = text.strip()
         if not new_name:
             bot.send_message(message.chat.id, "❌ الاسم لا يمكن أن يكون فارغاً.")
             return
-        
         requester_id = req_data["requester_id"]
         requester_name = req_data["requester_name"]
         phone = req_data["phone"]
         decided_by = (f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name)
-        
         try:
             uid_str = str(requester_id)
             rows = users_sheet.get_all_values()
@@ -2769,33 +3344,26 @@ def handle_message(message):
                     break
             if not found:
                 users_sheet.append_row([new_name, phone, requester_id, True, False, False, False, False, False, False, False])
-            
             pending_requests.discard(requester_id)
             _approval_store.pop(short_key, None)
-            
             try:
                 bot.send_message(requester_id, f"✅ تمت الموافقة على طلبك! اسمك الجديد: {new_name}\nأرسل /start للبدء.")
             except:
                 pass
-            
             notify_owners_action(requester_id, new_name, phone, decided_by, "approve")
             bot.send_message(message.chat.id, f"✅ تمت الموافقة وتغيير الاسم إلى: {new_name}")
-            
             msg_ids = request_msg_ids.pop(requester_id, {})
             for oid, mid in msg_ids.items():
                 try:
                     bot.delete_message(oid, mid)
                 except:
                     pass
-                    
         except Exception as e:
             log_error(f"approve_with_rename: {e}")
             bot.send_message(message.chat.id, "❌ حدث خطأ أثناء الموافقة")
-        
         user_state.pop(uid, None)
         return
 
-    # اختيار اللغة
     if state.get("choosing_lang") or text in ["🇾🇪 العربية", "🇬🇧 English"]:
         if text == "🇾🇪 العربية":
             user_lang[uid] = "ar"
@@ -2809,7 +3377,6 @@ def handle_message(message):
         bot.send_message(message.chat.id, bt("رسالة_تم_تغيير_اللغة", uid), reply_markup=telebot.types.ReplyKeyboardRemove())
         return
 
-    # غير مسموح (كود سري)
     if not is_allowed:
         code = calc_secret_code(uid)
         _code_input = normalize_digits(text).strip()
@@ -2861,10 +3428,9 @@ def handle_message(message):
         subjects_kb, subjects_list = subjects_menu_kb(uid)
         data = get_data()
 
-        # زر المساعد الذكي (سويتش)
         ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
         if text in [f"🟢 {ai_button_text}", f"🔴 {ai_button_text}", ai_button_text]:
-            if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
+            if not AI_PROVIDERS:
                 bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
                 return
             if not is_ai_allowed(uid):
@@ -2889,7 +3455,6 @@ def handle_message(message):
                 )
             return
 
-        # زر النشر التلقائي (سويتش)
         publish_button_text = f"{bt('زر_نشر_تلقائي', uid)}"
         if text in [f"📢 {publish_button_text}", f"🔕 {publish_button_text}", publish_button_text]:
             if not is_ai_allowed(uid):
@@ -2910,7 +3475,6 @@ def handle_message(message):
                 bot.send_message(message.chat.id, "❌ حدث خطأ أثناء تغيير الإعداد.")
             return
 
-        # زر العودة
         if text == back_btn:
             if state.get("renaming_user"):
                 user_state.pop(uid, None)
@@ -2948,7 +3512,6 @@ def handle_message(message):
             bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # تعليمات
         if state.get("viewing_help"):
             if text == "👤 تعليمات المستخدم":
                 send_help_materials(message.chat.id, uid, "user")
@@ -2961,7 +3524,6 @@ def handle_message(message):
             bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # البحث بالتاريخ
         if text == bt("زر_التاريخ", uid):
             user_state[uid] = {"date_search": True, "step": "choose_date_type"}
             bot.send_message(message.chat.id, "📅 اختر نوع البحث:", reply_markup=date_type_menu(uid))
@@ -3009,7 +3571,6 @@ def handle_message(message):
                 _execute_search(message.chat.id, uid)
             return
 
-        # المواد
         if text == bt("زر_المواد", uid):
             user_state.pop(uid, None)
             bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
@@ -3070,7 +3631,6 @@ def handle_message(message):
             send_files_with_text(message.chat.id, all_text, all_fids, reply_markup=dates_menu_kb(dates, uid))
             return
 
-        # أزرار القائمة الرئيسية (التكاليف، الجدول، الملخصات، الأسعار، التنبيهات)
         if text == bt("زر_التكاليف", uid):
             ld = get_last_date(data, 4)
             if not ld:
@@ -3159,7 +3719,6 @@ def handle_message(message):
             bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
-        # طلب رفع ملف (مستخدم)
         if text == bt("زر_طلب_رفع", uid):
             user_state[uid] = {"requesting_upload": True, "step": "choose_subject"}
             bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=subjects_kb)
@@ -3228,7 +3787,6 @@ def handle_message(message):
                 return
             return
 
-        # إدارة المستخدمين
         if text == bt("زر_المستخدمين", uid):
             if not owner:
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3304,7 +3862,6 @@ def handle_message(message):
                 return
             return
 
-        # بث الإشعارات
         if text == bt("زر_اشعار", uid):
             if not (admin or owner):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3333,7 +3890,6 @@ def handle_message(message):
                     user_state.pop(uid, None)
                 return
 
-        # رفع التعليمات
         if text == bt("زر_رفع_تعليمات", uid):
             if not (admin or owner):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3372,7 +3928,6 @@ def handle_message(message):
                     user_state.pop(uid, None)
                 return
 
-        # رفع ملف (أدمن)
         if text == bt("زر_رفع_ملف", uid):
             if not (admin or owner):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3425,7 +3980,6 @@ def handle_message(message):
                 return
             return
 
-        # إضافة بيانات
         if text == bt("زر_اضافة", uid):
             if not (admin or owner):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3622,7 +4176,6 @@ def handle_message(message):
                 return
             return
 
-        # تعديل بيانات
         if text == bt("زر_تعديل", uid):
             if not (admin or owner):
                 bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
@@ -3737,7 +4290,7 @@ def handle_message(message):
 # ─────────────────────────────────────────────────────
 # معالجات الـ Callback
 # ─────────────────────────────────────────────────────
-@bot.callback_query_handler(func=lambda call: call.data.startswith("role_"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("role_admin_") or call.data.startswith("role_user_"))
 def handle_role(call):
     caller_id = call.from_user.id
     if not is_owner_id(caller_id):
@@ -3746,7 +4299,6 @@ def handle_role(call):
     parts = call.data.split("_", 2)
     new_role = parts[1]
     target_uid = parts[2]
-    decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
     try:
         rows = users_sheet.get_all_values()
         es = 0
@@ -3760,81 +4312,32 @@ def handle_role(call):
             cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
             if cell_id != target_uid:
                 continue
-            cur_own = row[5].strip().upper() if len(row) > 5 else "FALSE"
             cur_adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
             cur_allow = row[3].strip().upper() if len(row) > 3 else "FALSE"
+            cur_own = row[5].strip().upper() if len(row) > 5 else "FALSE"
             t_name = row[0].strip()
             t_phone = row[1].strip() if len(row) > 1 else ""
-            if new_role == "owner" and cur_own == "TRUE":
-                users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
-                label = "تم إلغاء صلاحية المالك"
-                try:
-                    bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
-                except:
-                    pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner")
-            elif new_role == "admin" and cur_adm == "TRUE" and cur_own != "TRUE":
-                users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
-                label = "تم إلغاء صلاحية الأدمن"
-                try:
-                    bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
-                except:
-                    pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
-            elif new_role == "user" and cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
-                users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
-                label = "⛔ تم إلغاء الصلاحية"
-                try:
-                    bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك.")
-                except:
-                    pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
-            elif new_role == "owner":
-                users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
-                label = "👑 تم تعيين مالك"
-                try:
-                    bot.send_message(int(target_uid), "👑 تهانينا! تمت ترقيتك إلى مالك.")
-                except:
-                    pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_owner")
-            elif new_role == "admin":
+            if new_role == "admin":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
                 label = "⭐ تم تعيين أدمن"
                 try:
                     bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
                 except:
                     pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_admin")
             else:
                 users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
                 label = "👤 تم تعيين مستخدم"
-                if cur_own == "TRUE":
-                    try:
-                        bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
-                    except:
-                        pass
-                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner_to_user")
-                elif cur_adm == "TRUE":
+                if cur_adm == "TRUE":
                     try:
                         bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
                     except:
                         pass
-                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
                 else:
                     try:
                         bot.send_message(int(target_uid), bt("رسالة_موافقة", int(target_uid)))
                     except:
                         pass
-                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_user")
-            try:
-                rows2 = users_sheet.get_all_values()
-                for row2 in rows2[1:]:
-                    if len(row2) > 2 and row2[2].strip().lstrip("'") == target_uid:
-                        send_user_card(call.message.chat.id, row2)
-                        break
-            except Exception as e2:
-                if "message is not modified" not in str(e2):
-                    log_error(f"role edit: {e2}")
+            update_user_card_in_chat(int(target_uid), call.message.chat.id)
             bot.answer_callback_query(call.id, label)
             return
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
@@ -3851,7 +4354,6 @@ def handle_ai_permission(call):
     parts = call.data.split("_", 2)
     action = parts[1]
     target_uid = parts[2]
-    decided_by = (f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name)
     allowed = (action == "on")
     if set_ai_allowed(int(target_uid), allowed):
         label = "✅ تم تفعيل AI" if allowed else "❌ تم تعطيل AI"
@@ -3859,20 +4361,11 @@ def handle_ai_permission(call):
             rows = users_sheet.get_all_values()
             for row in rows[1:]:
                 if len(row) > 2 and row[2].strip().lstrip("'") == target_uid:
-                    send_user_card(call.message.chat.id, row)
+                    send_user_card(call.message.chat.id, row, edit_existing=True)
                     break
         except:
             pass
         bot.answer_callback_query(call.id, label)
-        name, phone = _get_user_name_phone(int(target_uid))
-        notify_owners_action(int(target_uid), name, phone, decided_by, "ai_enabled" if allowed else "ai_disabled")
-        try:
-            if allowed:
-                bot.send_message(int(target_uid), bt("رسالة_ai_تفعيل", int(target_uid)))
-            else:
-                bot.send_message(int(target_uid), bt("رسالة_ai_تعطيل", int(target_uid)))
-        except:
-            pass
     else:
         bot.answer_callback_query(call.id, "❌ فشل التحديث")
 
@@ -4101,6 +4594,46 @@ def handle_rejection(call):
         except:
             pass
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_multi_"))
+def handle_confirm_multi(call):
+    short_key = call.data.split("_")[2]
+    data = _temp_admin_actions.get(short_key)
+    if not data or data["expires"] < time.time():
+        bot.answer_callback_query(call.id, "انتهت صلاحية الطلب")
+        return
+    uid = data["uid"]
+    for item in data["data"]:
+        try:
+            line = item.strip()
+            executed, response = try_execute_admin_command(line, uid, get_user_role(uid), call.message.chat.id, bot)
+            if executed:
+                bot.send_message(call.message.chat.id, response)
+            else:
+                bot.send_message(call.message.chat.id, f"⚠️ لم يتم إضافة: {line[:100]}")
+        except Exception as e:
+            log_error(f"خطأ في إضافة بند متعدد: {e}")
+    bot.answer_callback_query(call.id, "✅ تمت الإضافة")
+    _temp_admin_actions.pop(short_key, None)
+    bot.send_message(call.message.chat.id, "✅ تم إضافة جميع البيانات بنجاح.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("edit_multi_"))
+def handle_edit_multi(call):
+    short_key = call.data.split("_")[2]
+    data = _temp_admin_actions.get(short_key)
+    if not data or data["expires"] < time.time():
+        bot.answer_callback_query(call.id, "انتهت صلاحية الطلب")
+        return
+    bot.answer_callback_query(call.id, "✏️ أرسل النص المعدل")
+    user_state[data["uid"]] = {"editing_multi": short_key, "original": data["original"]}
+    bot.send_message(call.message.chat.id, "أرسل النص المعدل ليتم إعادة عرضه للتأكيد.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("reject_multi_"))
+def handle_reject_multi(call):
+    short_key = call.data.split("_")[2]
+    data = _temp_admin_actions.pop(short_key, None)
+    bot.answer_callback_query(call.id, "❌ تم الإلغاء")
+    bot.send_message(call.message.chat.id, "تم إلغاء إضافة البيانات.")
+
 @bot.callback_query_handler(func=lambda call: (call.data.startswith("ms_subj:") or call.data.startswith("ms_type:")))
 def handle_multiselect(call):
     uid = call.from_user.id
@@ -4223,15 +4756,12 @@ def handle_file_request_decision(call):
 def run():
     load_bot_texts()
     load_button_texts()
+    load_ai_providers()
     set_bot_commands()
-    if not OPENROUTER_API_KEY and not GEMINI_API_KEY:
-        log_warning("⚠️ لا يوجد مفتاح AI. لن يعمل المساعد الذكي.")
-    elif not OPENROUTER_API_KEY:
-        log_info("✅ Gemini API فقط مفعل.")
-    elif not GEMINI_API_KEY:
-        log_info("✅ OpenRouter API فقط مفعل.")
+    if not AI_PROVIDERS:
+        log_warning("⚠️ لا يوجد مزود AI نشط. لن يعمل المساعد الذكي.")
     else:
-        log_info("✅ Gemini و OpenRouter مفعلان (Gemini أولاً).")
+        log_info(f"✅ تم تحميل {len(AI_PROVIDERS)} مزود AI.")
     threading.Thread(target=_watch_sheet_loop, daemon=True).start()
     log_info("بوت الدراسة يعمل ✅")
     bot.infinity_polling()
