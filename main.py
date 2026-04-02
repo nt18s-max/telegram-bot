@@ -1,7 +1,8 @@
 import threading
 import os
 import time
-import importlib
+import subprocess
+import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 class KeepAlive(BaseHTTPRequestHandler):
@@ -17,34 +18,37 @@ def run_server():
     server = HTTPServer(("0.0.0.0", port), KeepAlive)
     server.serve_forever()
 
-def run_bot1_with_restart():
-    import study_bot
+def run_bot_subprocess(script_name, token_var):
+    """يشغل كل بوت في process منفصل — لا تعارض في الـ globals أو handlers"""
     while True:
-        try:
-            importlib.reload(study_bot)
-            study_bot.run()
-        except Exception as e:
-            print(f"❌ study_bot توقف: {e} — إعادة التشغيل بعد 5 ثواني...")
-            time.sleep(5)
-
-def run_test_bot_with_restart():
-    """تشغيل بوت التطوير فقط لو المتغير موجود"""
-    if not os.environ.get("STUDY_TEST_TOKEN"):
-        print("ℹ️ STUDY_TEST_TOKEN غير موجود — study_test_bot لن يشتغل")
-        return
-    import study_test_bot
-    while True:
-        try:
-            importlib.reload(study_test_bot)
-            study_test_bot.run()
-        except Exception as e:
-            print(f"❌ study_test_bot توقف: {e} — إعادة التشغيل بعد 5 ثواني...")
-            time.sleep(5)
+        if not os.environ.get(token_var):
+            print(f"ℹ️ {token_var} غير موجود — {script_name} لن يشتغل")
+            return
+        print(f"▶️ تشغيل {script_name}...")
+        proc = subprocess.Popen(
+            [sys.executable, script_name],
+            env=os.environ.copy()
+        )
+        proc.wait()
+        print(f"❌ {script_name} توقف (exit {proc.returncode}) — إعادة التشغيل بعد 5 ثواني...")
+        time.sleep(5)
 
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
-    threading.Thread(target=run_bot1_with_restart, daemon=True).start()
-    threading.Thread(target=run_test_bot_with_restart, daemon=True).start()
+
+    # study_bot — البوت الأصلي
+    threading.Thread(
+        target=run_bot_subprocess,
+        args=("study_bot.py", "STUDY_BOT_TOKEN"),
+        daemon=True
+    ).start()
+
+    # study_test_bot — بوت التطوير (يشتغل فقط لو STUDY_TEST_TOKEN موجود)
+    threading.Thread(
+        target=run_bot_subprocess,
+        args=("study_test_bot.py", "STUDY_TEST_TOKEN"),
+        daemon=True
+    ).start()
 
     # contact_bot يشتغل في Main Thread لأنه يحتاج asyncio event loop
     import contact_bot
