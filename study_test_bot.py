@@ -37,10 +37,8 @@ BOT_NAME = "study_test_bot"  # للتمييز في اللوج
 SHEET_KEY = os.environ.get("SHEET_KEY", "")
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s | %(levelname)-8s | %(message)s",
-                    datefmt="%Y-%m-%d %H:%M:%S")
-logger = logging.getLogger("StudyBot")
+# logging.basicConfig — shared with study_bot, skipped
+logger = logging.getLogger("StudyTestBot")
 
 bot = telebot.TeleBot(STUDY_BOT_TOKEN)
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
