@@ -34,6 +34,7 @@ def run_bot_subprocess(script_name, token_var):
         time.sleep(5)
 
 if __name__ == "__main__":
+    # HTTP Keep-alive server
     threading.Thread(target=run_server, daemon=True).start()
 
     # study_bot — البوت الأصلي
@@ -50,6 +51,14 @@ if __name__ == "__main__":
         daemon=True
     ).start()
 
-    # contact_bot يشتغل في Main Thread لأنه يحتاج asyncio event loop
-    import contact_bot
-    contact_bot.run()
+    # contact_bot — يشتغل كـ subprocess أيضاً لتجنب تعارض asyncio
+    threading.Thread(
+        target=run_bot_subprocess,
+        args=("contact_bot.py", "CONTACT_BOT_TOKEN"),
+        daemon=True
+    ).start()
+
+    # Main thread يبقى حياً لإبقاء كل الـ daemon threads شغّالة
+    print("✅ جميع البوتات تم تشغيلها")
+    while True:
+        time.sleep(60)
