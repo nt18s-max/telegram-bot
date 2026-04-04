@@ -253,8 +253,14 @@ _ai_histories = {}
 _AI_MAX_HISTORY = 20
 
 AI_SYSTEM_PROMPT_BASE = (
-    "أنت مساعد ذكي لطلاب الجامعة. أجب دائماً باللغة العربية ما لم يطلب المستخدم غير ذلك. "
-    "إجاباتك مختصرة وواضحة ومناسبة للطلاب. لا تستخدم markdown بشكل مبالغ فيه."
+    "أنت مساعد ذكي لطلاب الجامعة اسمك 'مساعد نايف'. أجب دائماً باللغة العربية ما لم يطلب المستخدم غير ذلك. "
+    "إجاباتك مختصرة وواضحة ومناسبة للطلاب. لا تستخدم markdown بشكل مبالغ فيه.\n\n"
+    "**تعليمات مهمة جداً عند الإجابة عن كيفية استخدام البوت:**\n"
+    "- إذا سأل المستخدم 'كيف' يفعل شيئاً في البوت، اشرح له المسار بالأسهم مثل:\n"
+    "  📚 المواد ← رياضيات ← 📝 التكاليف ← اختر التاريخ\n"
+    "- اذكر اسم الزر كما يظهر في البوت بالضبط.\n"
+    "- إذا كان هناك أكثر من طريقة، اذكرهم جميعاً.\n"
+    "- كن محدداً ومختصراً."
 )
 
 def load_ai_providers():
@@ -599,6 +605,11 @@ def call_groq(provider, uid, user_text, system_prompt):
     except Exception as e:
         log_error(f"Groq exception: {e}", uid)
         return None, None
+
+def ai_reset_model():
+    """إعادة تحميل مزودي AI من الشيت"""
+    global AI_PROVIDERS
+    load_ai_providers()
 
 def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if not AI_PROVIDERS:
@@ -1189,65 +1200,171 @@ def get_data_summary_for_ai(uid, user_role):
     return "\n".join(lines)
 
 def get_bot_code_summary(uid):
+    """
+    دليل البوت الديناميكي — يُبنى تلقائياً من:
+    - BOT_TEXTS: أسماء الأزرار الحية (تتغير مع الشيت أو اللغة)
+    - get_subjects(): المواد الفعلية من الشيت
+    لإضافة ميزة جديدة: أضف bt() key جديد في BOT_TEXTS وأضف السطر هنا.
+    """
     lines = []
+
+    # ─── معلومات عامة ───
     lines.append("### معلومات عامة عن البوت ###")
-    lines.append("- هذا بوت دراسي لإدارة المواد الجامعية والمحاضرات والتكاليف.")
-    lines.append("- يدعم Google Sheets كقاعدة بيانات.")
-    lines.append("- يدعم اللغة العربية والإنجليزية.")
+    lines.append("- بوت دراسي لطلاب الجامعة: محاضرات، تكاليف، ملخصات، تنبيهات، أسعار ملازم.")
+    lines.append("- قاعدة البيانات: Google Sheets. يدعم العربية والإنجليزية.")
+    lines.append("- الأزرار في لوحة المفاتيح أسفل الشاشة.")
 
-    lines.append("\n### الرتب والصلاحيات ###")
-    lines.append("- **مستخدم عادي**: يمكنه عرض البيانات، طلب رفع ملف، استخدام المساعد الذكي (إذا فعّل المالك).")
-    lines.append("- **أدمن**: يمكنه إضافة/تعديل/حذف البيانات، رفع ملفات مباشرة، إرسال إشعارات، رفع تعليمات.")
-    lines.append("- **مالك**: كل صلاحيات الأدمن + إدارة المستخدمين (الموافقة على الطلبات، تغيير الرتب، تفعيل AI).")
+    # ─── الرتب ───
+    lines.append("\n### الرتب ###")
+    lines.append("- مستخدم: عرض البيانات، طلب رفع ملف، مساعد نايف (بإذن المالك).")
+    lines.append("- أدمن: إضافة/تعديل/حذف، رفع ملفات، إرسال إشعارات.")
+    lines.append("- مالك: كل الصلاحيات + إدارة المستخدمين.")
 
-    lines.append("\n### الأزرار الرئيسية ###")
-    button_keys = [
-        "زر_المواد", "زر_التاريخ", "زر_التكاليف", "زر_الجدول", "زر_التنبيهات",
-        "زر_الاسعار", "زر_الملخصات", "زر_طلب_رفع", "زر_رفع_ملف", "زر_رفع_تعليمات",
-        "زر_اشعار", "زر_اضافة", "زر_تعديل", "زر_المستخدمين", "زر_عوده"
-    ]
-    for key in button_keys:
-        lines.append(f"- **{bt(key, uid)}**: {_get_button_description(key)}")
+    # ─── قراءة أسماء الأزرار الحية ───
+    B = {k: bt(v, uid) for k, v in {
+        "مواد":          "زر_المواد",
+        "تاريخ":         "زر_التاريخ",
+        "تكاليف":        "زر_التكاليف",
+        "جدول":          "زر_الجدول",
+        "تنبيهات":       "زر_التنبيهات",
+        "اسعار":         "زر_الاسعار",
+        "ملخصات":        "زر_الملخصات",
+        "طلب_رفع":       "زر_طلب_رفع",
+        "رفع_ملف":       "زر_رفع_ملف",
+        "رفع_تعليمات":  "زر_رفع_تعليمات",
+        "اشعار":         "زر_اشعار",
+        "اضافة":         "زر_اضافة",
+        "تعديل":         "زر_تعديل",
+        "مستخدمين":     "زر_المستخدمين",
+        "عوده":          "زر_عوده",
+        "يوم":           "زر_يوم",
+        "فتره":          "زر_فتره",
+        "حسب_ماده":     "زر_حسب_الماده",
+        "حسب_تاريخ":    "زر_حسب_التاريخ",
+        "خيار_جدول":    "خيار_الجدول",
+        "خيار_تكاليف":  "خيار_التكاليف",
+        "خيار_سعر":     "خيار_السعر",
+        "خيار_ملخص":    "خيار_الملخص",
+        "خيار_تنبيه":   "خيار_التنبيهات",
+        "اضافة_محاضره": "زر_اضافة_محاضره",
+        "اضافة_تكليف":  "زر_اضافة_تكليف",
+        "اضافة_ملخص":   "زر_اضافة_ملخص",
+        "اضافة_سعر":    "زر_اضافة_سعر",
+        "اضافة_تنبيه":  "زر_اضافة_تنبيه",
+        "تعديل_محاضره": "زر_تعديل_محاضره",
+        "تعديل_تكليف":  "زر_تعديل_تكليف",
+        "تعديل_ملخص":   "زر_تعديل_ملخص",
+        "تعديل_سعر":    "زر_تعديل_سعر",
+        "تعديل_تنبيه":  "زر_تعديل_تنبيه",
+        "نشر_تلقائي":   "زر_نشر_تلقائي",
+        "مساعد_نايف":   "زر_مساعد_نايف",
+    }.items()}
 
-    lines.append("\n### أوامر البوت ###")
-    lines.append("- `/start` - بدء البوت وعرض القائمة")
-    lines.append("- `/help` - عرض التعليمات")
-    lines.append("- `/lang` - تغيير اللغة")
-    lines.append("- `/ai` - تشغيل المساعد الذكي (إذا كانت الصلاحية مفعلة)")
-    lines.append("- `/ai_reset` - إعادة تعيين نموذج AI (للمالك فقط)")
-    lines.append("- `/ai_clear` - مسح سياق محادثة AI")
+    # ─── المواد الحية من الشيت ───
+    try:
+        subjects = get_subjects()
+        subjects_str = " / ".join(subjects) if subjects else "لا توجد مواد بعد"
+    except:
+        subjects_str = "غير متاح"
+    lines.append(f"\nالمواد المتاحة حالياً: {subjects_str}")
 
-    lines.append("\n### كيف يعمل المساعد الذكي ###")
-    lines.append("- يتم تفعيله عبر زر '🤖 مساعد نايف' في القائمة.")
-    lines.append("- عند التفعيل، كل الرسائل النصية والتسجيلات الصوتية تمر للذكاء الاصطناعي.")
-    lines.append("- الأزرار لا تمر للذكاء الاصطناعي وتعمل بشكل طبيعي.")
-    lines.append("- الأدمن والمالك يمكنهم تنفيذ الأوامر الإدارية عبر النص.")
-    lines.append("- الذكاء الاصطناعي يقرأ قاعدة البيانات ويجيب على الأسئلة.")
+    # ─── الدليل الكامل (يُبنى من B تلقائياً) ───
+    lines.append("\n### كيفية استخدام كل ميزة ###")
 
-    lines.append("\n### النشر التلقائي ###")
-    lines.append("- زر '📢/🔕 النشر التلقائي' في القائمة الرئيسية.")
-    lines.append("- عند التفعيل، ستصل إليك إشعارات عند إضافة محتوى جديد (محاضرات، تكاليف، ملخصات، إلخ).")
-    lines.append("- الحالة محفوظة في الشيت ولا تتغير عند إعادة تشغيل البوت.")
+    lines.append(f"\n## التكاليف ##")
+    lines.append(f"طريقة 1 (مادة معينة): {B['مواد']} ← اسم المادة ← {B['خيار_تكاليف']} ← اختر التاريخ")
+    lines.append(f"طريقة 2 (آخر تكليف): {B['تكاليف']}")
+    lines.append(f"طريقة 3 (بالتاريخ): {B['تاريخ']} ← {B['يوم']} ← التاريخ ← المادة ← التكاليف")
+
+    lines.append(f"\n## جدول المحاضرات ##")
+    lines.append(f"طريقة 1 (آخر يوم): {B['جدول']}")
+    lines.append(f"طريقة 2 (مادة معينة): {B['مواد']} ← اسم المادة ← {B['خيار_جدول']} ← اختر التاريخ")
+    lines.append(f"طريقة 3 (بالتاريخ): {B['تاريخ']} ← {B['يوم']} ← التاريخ ← المادة ← المحاضرات")
+
+    lines.append(f"\n## الملخصات ##")
+    lines.append(f"طريقة 1 (مادة معينة): {B['مواد']} ← اسم المادة ← {B['خيار_ملخص']} ← اختر التاريخ")
+    lines.append(f"طريقة 2 (آخر ملخص): {B['ملخصات']}")
+
+    lines.append(f"\n## أسعار الملازم ##")
+    lines.append(f"جميع الأسعار: {B['اسعار']}")
+    lines.append(f"سعر مادة: {B['مواد']} ← اسم المادة ← {B['خيار_سعر']}")
+
+    lines.append(f"\n## التنبيهات ##")
+    lines.append(f"جميع التنبيهات: {B['تنبيهات']}")
+    lines.append(f"تنبيهات مادة: {B['مواد']} ← اسم المادة ← {B['خيار_تنبيه']}")
+
+    lines.append(f"\n## البحث بالتاريخ ##")
+    lines.append(f"يوم واحد: {B['تاريخ']} ← {B['يوم']} ← اكتب اليوم (مثال: 27 أو 27/03/2026) ← اختر المواد ← اختر نوع البيانات")
+    lines.append(f"فترة زمنية: {B['تاريخ']} ← {B['فتره']} ← اكتب الفترة (مثال: 15-27) ← اختر المواد ← اختر نوع البيانات ← اختر طريقة العرض ({B['حسب_ماده']} أو {B['حسب_تاريخ']})")
+
+    lines.append(f"\n## طلب رفع ملف (مستخدم عادي) ##")
+    lines.append(f"{B['طلب_رفع']} ← اسم المادة ← {B['اضافة_تكليف']} أو {B['اضافة_ملخص']} ← التاريخ ← أرسل الملف ← ✅ إرسال")
+    lines.append("يصل الطلب للأدمن ليوافق أو يرفضه ويُضاف تلقائياً.")
+
+    lines.append(f"\n## مساعد نايف ##")
+    lines.append(f"تفعيل: اضغط '🔴 🤖 {B['مساعد_نايف']}' ← يتحول إلى 🟢")
+    lines.append(f"إيقاف: اضغطه مرة ثانية ← يتحول إلى 🔴")
+    lines.append("شرط مهم: يقرأ رسائلك فقط وأنت في الصفحة الرئيسية. إذا دخلت أي زر، يبقى مفعلاً لكن لا يقرأ حتى تعود.")
+
+    lines.append(f"\n## النشر التلقائي ##")
+    lines.append(f"تفعيل: '🔕 {B['نشر_تلقائي']}' ← يتحول إلى 📢")
+    lines.append("عند تفعيله تصلك إشعارات عند إضافة أي محتوى جديد.")
+
+    lines.append("\n## تغيير اللغة ##")
+    lines.append("/lang ← اختر العربية أو الإنجليزية")
+
+    # ─── ميزات الأدمن/المالك ───
+    lines.append("\n### ميزات الأدمن والمالك ###")
+
+    lines.append(f"\n## إضافة بيانات ##")
+    lines.append(f"{B['اضافة']} ← اختر النوع:")
+    lines.append(f"• {B['اضافة_محاضره']}: التاريخ ← المبنى ← القاعة ← المادة ← الوقت")
+    lines.append(f"• {B['اضافة_تكليف']} / {B['اضافة_ملخص']} / {B['اضافة_تنبيه']}: المادة ← التاريخ ← النص")
+    lines.append(f"• {B['اضافة_سعر']}: المادة ← السعر")
+
+    lines.append(f"\n## تعديل أو حذف ##")
+    lines.append(f"{B['تعديل']} ← اختر ({B['تعديل_محاضره']} / {B['تعديل_تكليف']} / {B['تعديل_ملخص']} / {B['تعديل_سعر']} / {B['تعديل_تنبيه']}) ← المادة ← التاريخ ← تعديل أو حذف")
+
+    lines.append(f"\n## رفع ملف مباشرة ##")
+    lines.append(f"{B['رفع_ملف']} ← المادة ← النوع ← التاريخ ← أرسل الملف ← ✅ إرسال")
+
+    lines.append(f"\n## إرسال إشعار ##")
+    lines.append(f"{B['اشعار']} ← اكتب النص ← أرسل ملف (اختياري) ← 📤 إرسال الآن")
+
+    lines.append(f"\n## إدارة المستخدمين (مالك) ##")
+    lines.append(f"{B['مستخدمين']} ← بحث بالاسم/الرقم/ID أو عرض الكل")
+    lines.append("من البطاقة: تعيين أدمن/مستخدم، تفعيل/تعطيل AI، تغيير الاسم")
+
+    lines.append("\n## الأوامر النصية (أدمن/مالك عبر مساعد نايف) ##")
+    # أمثلة ديناميكية تستخدم أول مادة موجودة فعلاً
+    ex_subj = subjects[0] if subjects else "رياضيات"
+    lines.append(f"• أضف محاضرة {ex_subj} يوم 27/03/2026 الساعة 10:00-12:00 قاعة 101")
+    lines.append(f"• أضف تكليف {ex_subj} تاريخ 28/03/2026 نص: حل المسائل 1-5")
+    lines.append(f"• احذف تكليف {ex_subj} تاريخ 27/03/2026")
+    lines.append("• أرسل إشعار للجميع: تذكير بالاختبار غداً")
+    lines.append("• فعّل AI للمستخدم 123456789")
 
     return "\n".join(lines)
 
+
 def _get_button_description(key):
+    """وصف مختصر لكل زر — يُستخدم في السياق العام فقط."""
     desc = {
-        "زر_المواد": "يعرض قائمة المواد المتاحة. بعد اختيار مادة، يمكنك اختيار عرض جدولها، تكاليفها، ملخصاتها، تنبيهاتها، أو سعرها.",
-        "زر_التاريخ": "يسمح بالبحث عن البيانات حسب التاريخ (يوم محدد أو فترة زمنية).",
-        "زر_التكاليف": "يعرض آخر التكاليف المضافة لجميع المواد.",
-        "زر_الجدول": "يعرض أوقات المحاضرات لآخر يوم دراسي.",
-        "زر_التنبيهات": "يعرض التنبيهات الحالية.",
-        "زر_الاسعار": "يعرض أسعار الملازم لجميع المواد.",
-        "زر_الملخصات": "يعرض آخر الملخصات المضافة.",
-        "زر_طلب_رفع": "للمستخدمين العاديين: يتيح طلب رفع ملف (سيتم إرسال طلب للمشرف).",
-        "زر_رفع_ملف": "للأدمن: يسمح برفع ملف مباشرة للتكليف أو الملخص.",
-        "زر_رفع_تعليمات": "للأدمن: يسمح برفع تعليمات للمستخدمين أو الأدمن.",
-        "زر_اشعار": "للأدمن: يسمح بإرسال إشعار لجميع المستخدمين.",
-        "زر_اضافة": "للأدمن: يسمح بإضافة محاضرة، تكليف، ملخص، سعر، أو تنبيه.",
-        "زر_تعديل": "للأدمن: يسمح بتعديل أو حذف البيانات الموجودة.",
-        "زر_المستخدمين": "للمالك فقط: يعرض قائمة المستخدمين ويتيح التحكم بصلاحياتهم.",
-        "زر_عوده": "يعود إلى القائمة الرئيسية."
+        "زر_المواد":       "يعرض قائمة المواد. اختر مادة لعرض جدولها، تكاليفها، ملخصاتها، تنبيهاتها، أو سعرها.",
+        "زر_التاريخ":      "بحث بالتاريخ: يوم واحد أو فترة زمنية.",
+        "زر_التكاليف":     "آخر التكاليف لجميع المواد.",
+        "زر_الجدول":       "محاضرات آخر يوم دراسي.",
+        "زر_التنبيهات":    "جميع التنبيهات الحالية.",
+        "زر_الاسعار":      "أسعار الملازم لجميع المواد.",
+        "زر_الملخصات":     "آخر الملخصات المضافة.",
+        "زر_طلب_رفع":      "للمستخدم: طلب رفع ملف للأدمن.",
+        "زر_رفع_ملف":      "للأدمن: رفع ملف مباشرة.",
+        "زر_رفع_تعليمات": "للأدمن: رفع تعليمات للمستخدمين أو الأدمن.",
+        "زر_اشعار":        "للأدمن: إرسال إشعار لجميع المستخدمين.",
+        "زر_اضافة":        "للأدمن: إضافة محاضرة، تكليف، ملخص، سعر، أو تنبيه.",
+        "زر_تعديل":        "للأدمن: تعديل أو حذف البيانات.",
+        "زر_المستخدمين":   "للمالك: إدارة المستخدمين وصلاحياتهم.",
+        "زر_عوده":         "العودة للقائمة الرئيسية.",
     }
     return desc.get(key, "زر للتحكم في البوت.")
 
@@ -1297,7 +1414,7 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
 
     row_switches = []
-    if AI_PROVIDERS:  # يوجد مزود AI نشط
+    if AI_PROVIDERS:  # يوجد مزود AI نشط → أظهر أزرار السويتش
         load_user_auto_publish(uid)
         pub_status = "📢" if user_auto_publish.get(uid, False) else "🔕"
         row_switches.append(f"{pub_status} {bt('زر_نشر_تلقائي', uid)}")
@@ -3210,7 +3327,7 @@ def handle_message(message):
 
     # معالجة التسجيلات الصوتية
     if message.content_type == 'voice':
-        if user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
+        if (AI_PROVIDERS and is_ai_allowed(uid) and user_ai_enabled.get(uid, False)):
             processing_msg = bot.send_message(message.chat.id, "🎤 جاري معالجة التسجيل الصوتي...")
             bot.send_chat_action(message.chat.id, "typing")
             transcribed = transcribe_voice(message.voice.file_id, lang="ar")
@@ -3225,88 +3342,54 @@ def handle_message(message):
                 bot.edit_message_text("❌ لم أستطع فهم التسجيل الصوتي.", message.chat.id, processing_msg.message_id)
                 return
         else:
-            if not is_ai_allowed(uid):
-                bot.send_message(
-                    message.chat.id,
-                    "⛔ لا تملك صلاحية استخدام المساعد الذكي.\n"
-                    "للحصول على الصلاحية، تواصل مع منشئ البوت @nt18s",
-                    reply_markup=main_menu(uid, admin=admin, owner=owner)
-                )
-            else:
-                ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
-                bot.send_message(
-                    message.chat.id,
-                    f"⚠️ *المساعد الذكي غير مفعل*\n\n"
-                    f"للاستفادة من الردود الذكية، اضغط على زر:\n"
-                    f"`{ai_button_text}`\n\n"
-                    f"أو استخدم الأمر /ai لتفعيله.\n\n"
-                    f"📌 يمكنك استخدام الأزرار الموجودة في الأسفل للتحكم بالبوت.",
-                    parse_mode="Markdown",
-                    reply_markup=main_menu(uid, admin=admin, owner=owner)
-                )
+            # الشروط غير مكتملة → تجاهل الصوت بصمت (لا رسالة خطأ)
             return
 
-    # معالجة الأزرار (تكون أولوية، لكن نتجاهلها إذا كان النص من الصوت)
+    # ─── معالجة الأزرار (أولوية قصوى، تتجاوز الـ AI دائماً) ───
     if text in BUTTON_TEXTS and not from_voice:
-        pass
-    # معالجة AI (إذا كان مفعلاً وليس في منتصف flow)
-    elif user_ai_enabled.get(uid, False) and is_ai_allowed(uid):
-        in_flow = bool(state) and not (len(state) == 1 and "subject" in state)
-        if in_flow:
-            pass
-        else:
-            user_role = get_user_role(uid)
-            typing_msg = bot.send_message(message.chat.id, f"{bt('رسالة_نايف_يكتب', uid)} ...")
-            def animate_typing():
-                frames = [" .", " ..", " ..."]
-                i = 0
-                start = time.time()
-                while time.time() - start < 8:
-                    try:
-                        bot.edit_message_text(f"{bt('رسالة_نايف_يكتب', uid)}{frames[i % len(frames)]}",
-                                              message.chat.id, typing_msg.message_id)
-                        i += 1
-                        time.sleep(0.3)
-                    except:
-                        break
-            threading.Thread(target=animate_typing, daemon=True).start()
-            def run_ai():
-                response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=None, send_notify=(owner or admin))
-                try:
-                    bot.delete_message(message.chat.id, typing_msg.message_id)
-                except:
-                    pass
-                if response:
-                    bot.send_message(message.chat.id, response, parse_mode="Markdown",
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
-                else:
-                    bot.send_message(message.chat.id, bt("رسالة_ai_فشل", uid),
-                                     reply_markup=main_menu(uid, admin=admin, owner=owner))
-            threading.Thread(target=run_ai, daemon=True).start()
-            return
+        pass  # يكمل للكود العادي أدناه
 
-    # التحقق من كتابة نص بدون AI مفعل
-    elif text and text not in BUTTON_TEXTS and not user_ai_enabled.get(uid, False):
-        if not is_ai_allowed(uid):
-            bot.send_message(
-                message.chat.id,
-                "⛔ لا تملك صلاحية استخدام المساعد الذكي.\n"
-                "للحصول على الصلاحية، تواصل مع منشئ البوت @nt18s",
-                reply_markup=main_menu(uid, admin=admin, owner=owner)
-            )
-        else:
-            ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
-            bot.send_message(
-                message.chat.id,
-                f"⚠️ *المساعد الذكي غير مفعل*\n\n"
-                f"للاستفادة من الردود الذكية، اضغط على زر:\n"
-                f"`{ai_button_text}`\n\n"
-                f"أو استخدم الأمر /ai لتفعيله.\n\n"
-                f"📌 يمكنك استخدام الأزرار الموجودة في الأسفل للتحكم بالبوت.",
-                parse_mode="Markdown",
-                reply_markup=main_menu(uid, admin=admin, owner=owner)
-            )
+    # ─── معالجة AI: الشروط الثلاثة يجب أن تكون مكتملة ───
+    elif (
+        AI_PROVIDERS                                    # شرط 1: يوجد مزود نشط
+        and is_ai_allowed(uid)                          # شرط 1: لدى المستخدم صلاحية
+        and user_ai_enabled.get(uid, False)             # شرط 2: السويتش ON
+        and not (bool(state) and not (                  # شرط 3: في الصفحة الرئيسية
+            len(state) == 1 and "subject" in state))
+        and text                                        # النص غير فارغ
+    ):
+        user_role = get_user_role(uid)
+        typing_msg = bot.send_message(message.chat.id, f"{bt('رسالة_نايف_يكتب', uid)} ...")
+        def animate_typing():
+            frames = [" .", " ..", " ..."]
+            i = 0
+            start = time.time()
+            while time.time() - start < 8:
+                try:
+                    bot.edit_message_text(f"{bt('رسالة_نايف_يكتب', uid)}{frames[i % len(frames)]}",
+                                          message.chat.id, typing_msg.message_id)
+                    i += 1
+                    time.sleep(0.3)
+                except:
+                    break
+        threading.Thread(target=animate_typing, daemon=True).start()
+        def run_ai():
+            response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=None, send_notify=(owner or admin))
+            try:
+                bot.delete_message(message.chat.id, typing_msg.message_id)
+            except:
+                pass
+            if response:
+                bot.send_message(message.chat.id, response, parse_mode="Markdown",
+                                 reply_markup=main_menu(uid, admin=admin, owner=owner))
+            else:
+                bot.send_message(message.chat.id, bt("رسالة_ai_فشل", uid),
+                                 reply_markup=main_menu(uid, admin=admin, owner=owner))
+        threading.Thread(target=run_ai, daemon=True).start()
         return
+
+    # ─── إذا اختلت أي شرط → الرسالة تروح للبوت العادي بصمت تام ───
+    # (لا يوجد أي رسالة خطأ عن AI — كأنه غير موجود)
 
     # ========== باقي معالجة البوت العادي ==========
     if state.get("awaiting_rename_for_approval"):
@@ -3430,18 +3513,34 @@ def handle_message(message):
         ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
         if text in [f"🟢 {ai_button_text}", f"🔴 {ai_button_text}", ai_button_text]:
             if not AI_PROVIDERS:
-                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
+                # لا يوجد مزود AI → لا شيء
+                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid),
+                                 reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             if not is_ai_allowed(uid):
-                bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
+                # ليس لديه صلاحية → اسأله إذا يريد طلب صلاحية
+                markup = telebot.types.InlineKeyboardMarkup()
+                markup.row(
+                    telebot.types.InlineKeyboardButton("✅ نعم", callback_data="ai_request_yes"),
+                    telebot.types.InlineKeyboardButton("❌ لا", callback_data="ai_request_no"),
+                )
+                bot.send_message(
+                    message.chat.id,
+                    f"🤖 *مساعد نايف*\n\n"
+                    f"ليس لديك صلاحية استخدام المساعد الذكي.\n\n"
+                    f"هل تريد إرسال طلب للمالك لتفعيل الصلاحية؟",
+                    parse_mode="Markdown",
+                    reply_markup=markup
+                )
                 return
+            # لديه صلاحية → تبديل السويتش
             current = user_ai_enabled.get(uid, False)
             user_ai_enabled[uid] = not current
             if user_ai_enabled[uid]:
                 bot.send_message(
                     message.chat.id,
-                    f"✅ تم تفعيل {ai_button_text}!\n\n"
-                    "الآن كل رسائلك النصية والتسجيلات الصوتية سترسل للذكاء الاصطناعي.\n"
+                    f"✅ تم تفعيل مساعد نايف!\n\n"
+                    "اكتب سؤالك مباشرة وسأرد عليك.\n"
                     "الأزرار لا تزال تعمل بشكل طبيعي.\n\n"
                     "لإيقاف المساعد، اضغط على الزر مرة أخرى.",
                     reply_markup=main_menu(uid, admin=admin, owner=owner)
@@ -3449,7 +3548,7 @@ def handle_message(message):
             else:
                 bot.send_message(
                     message.chat.id,
-                    f"❌ تم إيقاف {ai_button_text}.",
+                    f"🔴 تم إيقاف مساعد نايف.",
                     reply_markup=main_menu(uid, admin=admin, owner=owner)
                 )
             return
@@ -4752,6 +4851,84 @@ def handle_file_request_decision(call):
 # ─────────────────────────────────────────────────────
 # تشغيل البوت
 # ─────────────────────────────────────────────────────
+
+@bot.callback_query_handler(func=lambda call: call.data in ("ai_request_yes", "ai_request_no"))
+def handle_ai_permission_request(call):
+    uid = call.from_user.id
+    load_user_lang(uid)
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+    if call.data == "ai_request_yes":
+        # أرسل طلب لكل المالكين
+        owners = get_owner_ids()
+        name, phone = _get_user_name_phone(uid)
+        ph = f"\n📞 `{phone}`" if phone else ""
+        req_text = (
+            f"🤖 *طلب صلاحية مساعد نايف*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 {name}\n🆔 `{uid}`{ph}"
+        )
+        markup_owners = telebot.types.InlineKeyboardMarkup()
+        markup_owners.row(
+            telebot.types.InlineKeyboardButton("✅ منح الصلاحية", callback_data=f"grant_ai_{uid}"),
+            telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"deny_ai_{uid}"),
+        )
+        sent_any = False
+        for oid in owners:
+            try:
+                bot.send_message(oid, req_text, parse_mode="Markdown", reply_markup=markup_owners)
+                sent_any = True
+            except:
+                pass
+        if sent_any:
+            bot.answer_callback_query(call.id, "✅ تم إرسال الطلب")
+            bot.send_message(call.message.chat.id,
+                             "⏳ تم إرسال طلبك للمالك. سيتم إخبارك عند الموافقة.")
+        else:
+            bot.answer_callback_query(call.id, "❌ فشل إرسال الطلب")
+    else:
+        bot.answer_callback_query(call.id, "تم الإلغاء")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("grant_ai_") or call.data.startswith("deny_ai_"))
+def handle_ai_grant_deny(call):
+    caller_id = call.from_user.id
+    if not is_owner_id(caller_id):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    parts = call.data.split("_", 2)
+    action = parts[0]  # grant or deny
+    target_uid = int(parts[2])
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+    if action == "grant":
+        if set_ai_allowed(target_uid, True):
+            name, _ = _get_user_name_phone(target_uid)
+            bot.answer_callback_query(call.id, f"✅ تم منح الصلاحية لـ {name}")
+            bot.send_message(call.message.chat.id, f"✅ تم منح صلاحية مساعد نايف لـ {name}")
+            try:
+                bot.send_message(target_uid,
+                                 "🤖 *مساعد نايف*\n\n"
+                                 "✅ تمت الموافقة على طلبك!\n"
+                                 "اضغط على زر مساعد نايف في القائمة لتفعيله.",
+                                 parse_mode="Markdown")
+            except:
+                pass
+        else:
+            bot.answer_callback_query(call.id, "❌ فشل التحديث")
+    else:
+        bot.answer_callback_query(call.id, "تم الرفض")
+        bot.send_message(call.message.chat.id, "❌ تم رفض طلب صلاحية مساعد نايف")
+        try:
+            bot.send_message(target_uid, "❌ تم رفض طلب صلاحية مساعد نايف.")
+        except:
+            pass
+
 def run():
     load_bot_texts()
     load_button_texts()
