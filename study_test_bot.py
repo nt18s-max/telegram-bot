@@ -245,6 +245,7 @@ _log_messages = {}
 _user_card_messages = {}
 _pending_files = {}
 _naif_files = {}
+_schedule_cards = {}   # تخزين بطاقات الجدول المستخرجة مؤقتاً: {short_key: {uid, entries, msg_id, chat_id}}
 
 # ─────────────────────────────────────────────────────
 # دوال AI المتعددة
@@ -610,6 +611,134 @@ def ai_reset_model():
     """إعادة تحميل مزودي AI من الشيت"""
     global AI_PROVIDERS
     load_ai_providers()
+
+# ─────────────────────────────────────────────────────
+# نظام استخراج الجدول من النص
+# ─────────────────────────────────────────────────────
+
+def _time12_to_24(t):
+    """تحويل وقت مثل 8-10 أو 10:00-12:00 أو 12-2 إلى HH:MM - HH:MM بصيغة 24 ساعة"""
+    t = t.strip().replace("–","‐").replace("—","-").replace(" ","")
+    # فصل الجزئين
+    parts = re.split(r'[-‐]', t, maxsplit=1)
+    if len(parts) != 2:
+        return t
+    def _to24(h_str):
+        h_str = h_str.strip()
+        if ":" in h_str:
+            h, m = h_str.split(":", 1)
+        else:
+            h, m = h_str, "00"
+        h, m = int(h), int(m)
+        # قاعدة 12 ساعة جامعية: 8-12 صباح، 1-8 مساءً→ +12
+        if 1 <= h <= 7:
+            h += 12
+        return f"{h:02d}:{m:02d}"
+    return f"{_to24(parts[0])} - {_to24(parts[1])}"
+
+def _format_schedule_card(entries, note=""):
+    """بناء نص البطاقة من قائمة المدخلات"""
+    lines = ["📥 *بطاقة بيانات جاهزة للاعتماد*\n📚 *الجدول الدراسي المكتشف:*\n"]
+    for i, e in enumerate(entries, 1):
+        lines.append(f"{i}️⃣ *المادة:* {e.get('subject','')} ({e.get('teacher','')})")
+        lines.append(f"📅 *التاريخ:* {e.get('date','')}")
+        lines.append(f"🕒 *الوقت:* {e.get('time','')}")
+        lines.append(f"🏛️ *المكان:* {e.get('place','')}")
+        lines.append(f"📂 *النوع:* {e.get('type','محاضرة')}\n")
+    if note:
+        lines.append(f"⚠️ *ملاحظة:* {note}")
+    return "\n".join(lines)
+
+def _schedule_card_markup(short_key):
+    """أزرار البطاقة"""
+    mk = telebot.types.InlineKeyboardMarkup(row_width=3)
+    mk.row(
+        telebot.types.InlineKeyboardButton("✅ قبول وإضافة", callback_data=f"sched_accept_{short_key}"),
+        telebot.types.InlineKeyboardButton("✏️ تعديل", callback_data=f"sched_edit_{short_key}"),
+        telebot.types.InlineKeyboardButton("❌ إلغاء", callback_data=f"sched_cancel_{short_key}"),
+    )
+    return mk
+
+_EXTRACT_PROMPT = """\
+أنت مساعد استخراج بيانات. مهمتك فقط استخراج المحاضرات والمواعيد من النص وإرجاعها كـ JSON.
+
+قواعد الوقت (12 ساعة جامعية):
+- الأوقات 8-12 = صباح (08:00, 09:00 ... 12:00)
+- الأوقات 1-7 = مساء (+12): مثال 1→13:00, 2→14:00, 12→12:00
+
+أرجع JSON فقط بهذا الشكل (بدون أي نص خارجه):
+{
+  "entries": [
+    {
+      "subject": "اسم المادة",
+      "teacher": "اسم الأستاذ",
+      "date": "DD/MM/YYYY",
+      "time": "HH:MM - HH:MM",
+      "place": "المكان",
+      "type": "محاضرة"
+    }
+  ],
+  "note": "أي ملاحظة مهمة مثل يوم إجازة أو تعديل"
+}
+
+إذا كان هناك تعديل على محاضرة سابقة (مثل تغيير الأستاذ)، اذكر المحاضرة بشكلها المُعدَّل النهائي فقط.
+إذا ذُكر يوم إجازة أو لا يوجد دوام، أضفه في حقل note فقط.
+"""
+
+def extract_schedule_from_text(raw_text):
+    """
+    يستخرج الجدول من النص الحر باستخدام أول مزود AI متاح.
+    يرجع (entries_list, note_str) أو (None, None) عند الفشل.
+    """
+    if not AI_PROVIDERS:
+        return None, None
+    import json as _json
+    for provider in AI_PROVIDERS:
+        try:
+            if provider["provider"] == "gemini":
+                url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+                       f"{provider['model']}:generateContent?key={provider['api_key']}")
+                payload = {"contents": [{"parts": [{"text": _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text}]}],
+                           "generationConfig": {"temperature": 0, "maxOutputTokens": 1024}}
+                resp = _requests.post(url, json=payload, timeout=30)
+                if resp.status_code != 200:
+                    continue
+                raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                headers = {"Authorization": f"Bearer {provider['api_key']}", "Content-Type": "application/json"}
+                payload = {"model": provider["model"],
+                           "messages": [{"role": "user", "content": _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text}],
+                           "temperature": 0, "max_tokens": 1024}
+                url_map = {
+                    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+                    "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
+                    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+                    "mistral": "https://api.mistral.ai/v1/chat/completions",
+                    "groq": "https://api.groq.com/openai/v1/chat/completions",
+                }
+                ep = url_map.get(provider["provider"])
+                if not ep:
+                    continue
+                resp = _requests.post(ep, headers=headers, json=payload, timeout=30)
+                if resp.status_code != 200:
+                    continue
+                raw = resp.json()["choices"][0]["message"]["content"]
+            # تنظيف وتحليل JSON
+            raw = raw.strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw)
+            raw = re.sub(r'\s*```$', '', raw)
+            data = _json.loads(raw)
+            entries = data.get("entries", [])
+            note = data.get("note", "")
+            # تحويل الوقت
+            for e in entries:
+                if e.get("time"):
+                    e["time"] = _time12_to_24(e["time"])
+            return entries, note
+        except Exception as ex:
+            log_error(f"extract_schedule: {ex}")
+            continue
+    return None, None
 
 def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if not AI_PROVIDERS:
@@ -3374,6 +3503,34 @@ def handle_message(message):
                     break
         threading.Thread(target=animate_typing, daemon=True).start()
         def run_ai():
+            # ─── كشف إذا النص يحتوي جدولاً دراسياً (للأدمن/المالك فقط) ───
+            _schedule_keywords = ["محاضرة", "مقرر", "دوام", "الوقت:", "🕛", "🏛", "إشعار أكاديمي", "👨‍🏫"]
+            is_schedule_text = (user_role in ("admin", "owner") and
+                                sum(1 for kw in _schedule_keywords if kw in text) >= 2)
+
+            if is_schedule_text:
+                entries, note = extract_schedule_from_text(text)
+                try:
+                    bot.delete_message(message.chat.id, typing_msg.message_id)
+                except:
+                    pass
+                if entries:
+                    import time as _time
+                    short_key = f"sched_{int(_time.time())}_{uid}"
+                    card_text = _format_schedule_card(entries, note)
+                    mk = _schedule_card_markup(short_key)
+                    sent = bot.send_message(message.chat.id, card_text,
+                                            parse_mode="Markdown", reply_markup=mk)
+                    _schedule_cards[short_key] = {
+                        "uid": uid,
+                        "entries": entries,
+                        "note": note,
+                        "msg_id": sent.message_id,
+                        "chat_id": message.chat.id,
+                        "raw_text": text,
+                    }
+                    return
+                # فشل الاستخراج → رد عادي
             response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=None, send_notify=(owner or admin))
             try:
                 bot.delete_message(message.chat.id, typing_msg.message_id)
@@ -3390,6 +3547,44 @@ def handle_message(message):
 
     # ─── إذا اختلت أي شرط → الرسالة تروح للبوت العادي بصمت تام ───
     # (لا يوجد أي رسالة خطأ عن AI — كأنه غير موجود)
+
+    # ─── معالجة تعديل بطاقة الجدول ───
+    if state.get("editing_schedule"):
+        short_key = state["editing_schedule"]
+        card = _schedule_cards.get(short_key)
+        if not card:
+            user_state.pop(uid, None)
+            bot.send_message(message.chat.id, "⚠️ انتهت صلاحية البطاقة.")
+            return
+        user_state.pop(uid, None)
+        # دمج النص الأصلي مع التعديل
+        combined = card["raw_text"] + "\n\nتعديل المستخدم:\n" + text
+        typing_msg = bot.send_message(message.chat.id, "⏳ جاري إعادة الاستخراج...")
+        def _redo_extract():
+            entries, note = extract_schedule_from_text(combined)
+            try:
+                bot.delete_message(message.chat.id, typing_msg.message_id)
+            except:
+                pass
+            if entries:
+                card["entries"] = entries
+                card["note"] = note
+                card["raw_text"] = combined
+                new_card_text = _format_schedule_card(entries, note)
+                card["card_text"] = new_card_text
+                mk = _schedule_card_markup(short_key)
+                try:
+                    # تعديل الرسالة الأصلية
+                    bot.edit_message_text(new_card_text, card["chat_id"], card["msg_id"],
+                                          parse_mode="Markdown", reply_markup=mk)
+                except:
+                    sent = bot.send_message(card["chat_id"], new_card_text,
+                                            parse_mode="Markdown", reply_markup=mk)
+                    card["msg_id"] = sent.message_id
+            else:
+                bot.send_message(message.chat.id, "❌ لم أستطع استخراج البيانات. حاول مرة أخرى.")
+        threading.Thread(target=_redo_extract, daemon=True).start()
+        return
 
     # ========== باقي معالجة البوت العادي ==========
     if state.get("awaiting_rename_for_approval"):
@@ -4928,6 +5123,81 @@ def handle_ai_grant_deny(call):
             bot.send_message(target_uid, "❌ تم رفض طلب صلاحية مساعد نايف.")
         except:
             pass
+
+# ─────────────────────────────────────────────────────
+# Callbacks بطاقة الجدول الدراسي
+# ─────────────────────────────────────────────────────
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sched_accept_"))
+def handle_sched_accept(call):
+    uid = call.from_user.id
+    if not _is_admin_or_owner(uid):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    short_key = call.data[len("sched_accept_"):]
+    card = _schedule_cards.get(short_key)
+    if not card:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية البطاقة")
+        return
+    entries = card["entries"]
+    errors = []
+    success_lines = []
+    for e in entries:
+        subj   = e.get("subject", "").strip()
+        date   = e.get("date", "").strip()
+        time_v = e.get("time", "").strip()
+        place  = e.get("place", "").strip()
+        if not (subj and date and time_v):
+            errors.append(f"⚠️ بيانات ناقصة: {e}")
+            continue
+        if save_lecture(date, subj, time_v, place):
+            success_lines.append(f"✅ {subj} | {date} | {time_v}")
+        else:
+            errors.append(f"❌ فشل حفظ: {subj} {date}")
+    # تحديث الرسالة لإزالة الأزرار
+    result_text = card.get("card_text", "") + "\n\n"
+    if success_lines:
+        result_text += "✅ *تم الإضافة بنجاح:*\n" + "\n".join(success_lines)
+    if errors:
+        result_text += "\n" + "\n".join(errors)
+    try:
+        bot.edit_message_text(result_text, card["chat_id"], card["msg_id"],
+                              parse_mode="Markdown",
+                              reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        bot.send_message(card["chat_id"], result_text, parse_mode="Markdown")
+    _schedule_cards.pop(short_key, None)
+    bot.answer_callback_query(call.id, "✅ تمت الإضافة")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sched_edit_"))
+def handle_sched_edit(call):
+    uid = call.from_user.id
+    if not _is_admin_or_owner(uid):
+        bot.answer_callback_query(call.id, "⛔ غير مسموح")
+        return
+    short_key = call.data[len("sched_edit_"):]
+    card = _schedule_cards.get(short_key)
+    if not card:
+        bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية البطاقة")
+        return
+    bot.answer_callback_query(call.id, "✏️ أرسل التعديل")
+    user_state[uid] = {"editing_schedule": short_key}
+    bot.send_message(card["chat_id"],
+                     "✏️ أرسل النص المعدل أو التعديلات المطلوبة وسأعيد استخراج البيانات:")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("sched_cancel_"))
+def handle_sched_cancel(call):
+    uid = call.from_user.id
+    short_key = call.data[len("sched_cancel_"):]
+    card = _schedule_cards.pop(short_key, None)
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+    bot.answer_callback_query(call.id, "❌ تم الإلغاء")
 
 def run():
     load_bot_texts()
