@@ -55,7 +55,11 @@ try:
     help_sheet = spreadsheet.worksheet("المساعدة")
     bot_texts_sheet = spreadsheet.worksheet("bot_texts")
     try:
-        rooms_sheet = spreadsheet.worksheet("القاعات")
+        # يحاول الاسم الجديد أولاً ثم القديم للتوافق
+        try:
+            rooms_sheet = spreadsheet.worksheet("القاعات والمواد")
+        except:
+            rooms_sheet = spreadsheet.worksheet("القاعات")
     except:
         rooms_sheet = None
 except Exception as _e:
@@ -725,7 +729,17 @@ def extract_schedule_from_text(raw_text):
 
     for provider in sorted_providers:
         try:
-            full_prompt = _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text
+            # أضف قاموس المواد والأساتذة للمساعدة في الاستخراج
+            subjects_ctx = ""
+            try:
+                s_map = get_subjects_with_doctors()
+                if s_map:
+                    lines_map = [f"- {s}: {', '.join(docs) if docs else 'غير محدد'}"
+                                 for s, docs in s_map.items()]
+                    subjects_ctx = "\n\nمواد البوت وأساتذتها (للمرجعية فقط):\n" + "\n".join(lines_map)
+            except:
+                pass
+            full_prompt = _EXTRACT_PROMPT + subjects_ctx + "\n\nالنص:\n" + raw_text
             if provider["provider"] == "gemini":
                 url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                        f"{provider['model']}:generateContent?key={provider['api_key']}")
@@ -1163,9 +1177,12 @@ def save_lecture(date, subject, time_val, room):
     try:
         rows = sheet.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subject:
+            row_date = parse_date(safe_get(row, 0)) if safe_get(row, 0) else ""
+            row_subj = safe_get(row, 1)
+            if row_date == date and row_subj == subject:
                 sheet.update_cell(i, 3, time_val)
                 sheet.update_cell(i, 4, room)
+                log_info(f"save_lecture: تحديث صف {i} | {subject} | {date}")
                 return True
         new_row = [""] * 8
         new_row[0] = date
@@ -1173,6 +1190,7 @@ def save_lecture(date, subject, time_val, room):
         new_row[2] = time_val
         new_row[3] = room
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        log_info(f"save_lecture: إضافة جديدة | {subject} | {date} | {time_val} | {room}")
         # إشعار تلقائي
         all_users, _ = get_all_user_ids()
         title = f"🕐 *محاضرة جديدة*"
@@ -1180,7 +1198,7 @@ def save_lecture(date, subject, time_val, room):
         notify_auto_publish(title, message)
         return True
     except Exception as e:
-        log_error(f"save_lecture: {e}")
+        log_error(f"save_lecture: {e} | المادة={subject} | التاريخ={date}")
         return False
 
 def save_text_to_cell(date, subject, col, text_val):
@@ -1436,8 +1454,18 @@ def get_bot_code_summary(uid):
     # ─── المواد الحية من الشيت ───
     try:
         subjects = get_subjects()
-        subjects_str = " / ".join(subjects) if subjects else "لا توجد مواد بعد"
+        subjects_with_docs = get_subjects_with_doctors()
+        if subjects_with_docs:
+            subjects_str = " | ".join(
+                f"{s} ({', '.join(docs)})" if docs else s
+                for s, docs in subjects_with_docs.items()
+            )
+        elif subjects:
+            subjects_str = " / ".join(subjects)
+        else:
+            subjects_str = "لا توجد مواد بعد"
     except:
+        subjects = []
         subjects_str = "غير متاح"
     lines.append(f"\nالمواد المتاحة حالياً: {subjects_str}")
 
@@ -1746,13 +1774,56 @@ def get_subjects():
         return []
 
 def get_rooms(building):
+    """يجلب قائمة القاعات حسب المبنى — يتجاهل السطر الأول (headers)"""
     try:
         if not rooms_sheet:
             return []
-        return [r[1].strip() for r in rooms_sheet.get_all_values()
+        # تخطي السطر الأول (المبنى / القاعة / الدكتور / المادة)
+        rows = rooms_sheet.get_all_values()[1:]
+        return [r[1].strip() for r in rows
                 if len(r) > 1 and r[0].strip() == building and r[1].strip()]
     except:
         return []
+
+def get_subject_doctor(subject):
+    """
+    يرجع اسم الدكتور الافتراضي لمادة معينة من صفحة القاعات والمواد.
+    إذا كان هناك أكثر من دكتور لنفس المادة يعتمد الأول.
+    """
+    try:
+        if not rooms_sheet:
+            return ""
+        rows = rooms_sheet.get_all_values()[1:]  # تخطي header
+        for r in rows:
+            # العمود C = الدكتور (index 2)، العمود D = المادة (index 3)
+            if len(r) > 3 and r[3].strip() == subject and r[2].strip():
+                return r[2].strip()  # أول دكتور = الافتراضي
+        return ""
+    except:
+        return ""
+
+def get_subjects_with_doctors():
+    """
+    يرجع قاموس {اسم_المادة: [قائمة_الأساتذة]} من صفحة القاعات والمواد.
+    المادة مرتبطة بأستاذها، والأول هو الافتراضي.
+    """
+    try:
+        if not rooms_sheet:
+            return {}
+        result = {}
+        rows = rooms_sheet.get_all_values()[1:]  # تخطي header
+        for r in rows:
+            if len(r) > 3:
+                doctor  = r[2].strip()  # عمود C
+                subject = r[3].strip()  # عمود D
+                if subject:
+                    if subject not in result:
+                        result[subject] = []
+                    if doctor and doctor not in result[subject]:
+                        result[subject].append(doctor)
+        return result
+    except:
+        return {}
 
 def send_date_suggestions(chat_id, subject=None, for_lecture=False, for_alert=False, uid=None):
     now = datetime.now(YEMEN_TZ)
@@ -2717,9 +2788,11 @@ def send_user_card(chat_id, row, edit_existing=False):
 
     ai_icon = "🤖" if ai_val == "TRUE" else "🚫"
     ai_status = "مفعل" if ai_val == "TRUE" else "معطل"
-    ph_line = f"\n📞 `{phone}`" if phone else ""
+    ph_line = f"\n📞 [{phone}](tel:{phone})" if phone else ""
 
-    text = f"{role_icon} *{name}*\n🆔 `{uid_str}`{ph_line}\n{ai_icon} AI: {ai_status}\n{'─' * 23}"
+    # الـ ID كرابط يفتح الحساب مباشرة
+    uid_link = f"[{uid_str}](tg://user?id={uid_str})"
+    text = f"{role_icon} *{name}*\n🆔 {uid_link}{ph_line}\n{ai_icon} AI: {ai_status}\n{'─' * 23}"
 
     # الأزرار: صفين (تم إزالة زر المالك)
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
@@ -5192,36 +5265,86 @@ def handle_sched_accept(call):
     if not card:
         bot.answer_callback_query(call.id, "⚠️ انتهت صلاحية البطاقة")
         return
+
+    bot.answer_callback_query(call.id, "⏳ جاري الإضافة والتحقق...")
+
+    # إزالة الأزرار فوراً
+    try:
+        bot.edit_message_reply_markup(card["chat_id"], card["msg_id"],
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+
     entries = card["entries"]
-    errors = []
-    success_lines = []
+    verified_ok = []
+    verified_fail = []
+    save_errors = []
+
     for e in entries:
         subj   = e.get("subject", "").strip()
         date   = e.get("date", "").strip()
         time_v = e.get("time", "").strip()
         place  = e.get("place", "").strip()
+
         if not (subj and date and time_v):
-            errors.append(f"⚠️ بيانات ناقصة: {e}")
+            save_errors.append(f"⚠️ بيانات ناقصة: المادة={subj} التاريخ={date}")
             continue
-        if save_lecture(date, subj, time_v, place):
-            success_lines.append(f"✅ {subj} | {date} | {time_v}")
+
+        # تأكد من صيغة التاريخ
+        try:
+            parsed_date = parse_date(date)
+        except:
+            parsed_date = date
+
+        # حفظ في الشيت
+        saved = save_lecture(parsed_date, subj, time_v, place)
+        if not saved:
+            save_errors.append(f"❌ فشل الحفظ: {subj} | {parsed_date}")
+            continue
+
+        # ─── التحقق الفعلي من الشيت ───
+        found_in_sheet = False
+        try:
+            all_rows = sheet.get_all_values()
+            for row in all_rows[1:]:
+                row_date = parse_date(safe_get(row, 0)) if safe_get(row, 0) else ""
+                row_subj = safe_get(row, 1)
+                row_time = safe_get(row, 2)
+                if row_date == parsed_date and row_subj == subj:
+                    found_in_sheet = True
+                    break
+        except Exception as ex:
+            log_error(f"sched verify: {ex}")
+
+        if found_in_sheet:
+            verified_ok.append(f"✅ {subj}\n    📅 {parsed_date} | 🕒 {time_v} | 📍 {place}")
         else:
-            errors.append(f"❌ فشل حفظ: {subj} {date}")
-    # تحديث الرسالة لإزالة الأزرار وعرض النتيجة
-    if success_lines:
-        result_text = "✅ *تمت الإضافة للشيت بنجاح:*\n" + "\n".join(success_lines)
-    else:
-        result_text = "⚠️ لم يتم إضافة أي شيء."
-    if errors:
-        result_text += "\n\n" + "\n".join(errors)
+            verified_fail.append(f"⚠️ لم يُعثر عليه في الشيت: {subj} | {parsed_date}")
+
+    # بناء رسالة النتيجة
+    result_lines = []
+    if verified_ok:
+        result_lines.append("✅ *تم التحقق من إضافتها في الشيت:*")
+        result_lines.extend(verified_ok)
+    if verified_fail:
+        result_lines.append("\n⚠️ *تمت المحاولة لكن لم يُتحقق منها:*")
+        result_lines.extend(verified_fail)
+    if save_errors:
+        result_lines.append("\n❌ *أخطاء:*")
+        result_lines.extend(save_errors)
+    if not result_lines:
+        result_lines.append("⚠️ لم يتم إضافة أي شيء.")
+
+    result_text = "\n".join(result_lines)
+
     try:
         bot.edit_message_text(result_text, card["chat_id"], card["msg_id"],
                               parse_mode="Markdown",
                               reply_markup=telebot.types.InlineKeyboardMarkup())
     except:
         bot.send_message(card["chat_id"], result_text, parse_mode="Markdown")
+
     _schedule_cards.pop(short_key, None)
-    bot.answer_callback_query(call.id, "✅ تمت الإضافة")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sched_edit_"))
