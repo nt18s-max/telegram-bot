@@ -729,14 +729,14 @@ def extract_schedule_from_text(raw_text):
 
     for provider in sorted_providers:
         try:
-            # أضف قاموس المواد والأساتذة للمساعدة في الاستخراج
+            # أضف قاموس المواد والأساتذة إذا كان موجوداً
             subjects_ctx = ""
             try:
                 s_map = get_subjects_with_doctors()
                 if s_map:
                     lines_map = [f"- {s}: {', '.join(docs) if docs else 'غير محدد'}"
                                  for s, docs in s_map.items()]
-                    subjects_ctx = "\n\nمواد البوت وأساتذتها (للمرجعية فقط):\n" + "\n".join(lines_map)
+                    subjects_ctx = "\n\nمواد البوت وأساتذتها (للمرجعية):\n" + "\n".join(lines_map)
             except:
                 pass
             full_prompt = _EXTRACT_PROMPT + subjects_ctx + "\n\nالنص:\n" + raw_text
@@ -1456,11 +1456,13 @@ def get_bot_code_summary(uid):
         subjects = get_subjects()
         subjects_with_docs = get_subjects_with_doctors()
         if subjects_with_docs:
+            # شيت فيه مواد وأساتذة
             subjects_str = " | ".join(
                 f"{s} ({', '.join(docs)})" if docs else s
                 for s, docs in subjects_with_docs.items()
             )
         elif subjects:
+            # شيت فيه مواد بس بدون أساتذة
             subjects_str = " / ".join(subjects)
         else:
             subjects_str = "لا توجد مواد بعد"
@@ -1605,7 +1607,7 @@ def main_menu(uid, admin=False, owner=False):
         m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
         m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid))
         m.row(bt("زر_الاسعار", uid), bt("زر_الملخصات", uid), bt("زر_التنبيهات", uid))
-        m.row(bt("زر_اضافة", uid), bt("زر_تعديل", uid))
+        m.row(bt("زر_تعديل", uid), bt("زر_اضافة", uid))
         m.row(bt("زر_اشعار", uid), bt("زر_رفع_ملف", uid), bt("زر_رفع_تعليمات", uid))
         if owner:
             m.add(bt("زر_المستخدمين", uid))
@@ -1761,8 +1763,20 @@ def upload_confirm_menu(uid):
     return m
 
 def get_subjects():
+    """يجلب المواد من الشيت الرئيسي وشيت القاعات والمواد معاً"""
     try:
         seen, result = set(), []
+        # أولاً: من شيت القاعات والمواد (العمود D)
+        if rooms_sheet:
+            try:
+                for row in rooms_sheet.get_all_values()[1:]:
+                    s = row[3].strip() if len(row) > 3 else ""
+                    if s and s not in seen:
+                        seen.add(s)
+                        result.append(s)
+            except:
+                pass
+        # ثانياً: من الشيت الرئيسي (العمود B)
         for row in sheet.get_all_values()[1:]:
             s = row[1].strip() if len(row) > 1 else ""
             if s and s not in seen:
@@ -1778,8 +1792,7 @@ def get_rooms(building):
     try:
         if not rooms_sheet:
             return []
-        # تخطي السطر الأول (المبنى / القاعة / الدكتور / المادة)
-        rows = rooms_sheet.get_all_values()[1:]
+        rows = rooms_sheet.get_all_values()[1:]  # تخطي header
         return [r[1].strip() for r in rows
                 if len(r) > 1 and r[0].strip() == building and r[1].strip()]
     except:
@@ -1787,40 +1800,40 @@ def get_rooms(building):
 
 def get_subject_doctor(subject):
     """
-    يرجع اسم الدكتور الافتراضي لمادة معينة من صفحة القاعات والمواد.
+    يرجع اسم الدكتور الافتراضي لمادة معينة.
+    يعمل فقط إذا كان العمود D (المادة) مُعبَّأ في الشيت.
     إذا كان هناك أكثر من دكتور لنفس المادة يعتمد الأول.
     """
     try:
         if not rooms_sheet:
             return ""
-        rows = rooms_sheet.get_all_values()[1:]  # تخطي header
+        rows = rooms_sheet.get_all_values()[1:]
         for r in rows:
-            # العمود C = الدكتور (index 2)، العمود D = المادة (index 3)
             if len(r) > 3 and r[3].strip() == subject and r[2].strip():
-                return r[2].strip()  # أول دكتور = الافتراضي
+                return r[2].strip()
         return ""
     except:
         return ""
 
 def get_subjects_with_doctors():
     """
-    يرجع قاموس {اسم_المادة: [قائمة_الأساتذة]} من صفحة القاعات والمواد.
-    المادة مرتبطة بأستاذها، والأول هو الافتراضي.
+    يرجع قاموس {اسم_المادة: [قائمة_الأساتذة]} من الشيت.
+    يشتغل فقط إذا كان العمود D (المادة) مُعبَّأ.
+    إذا العمود فارغ يرجع قاموس فارغ (الشيت الحالي).
     """
     try:
         if not rooms_sheet:
             return {}
         result = {}
-        rows = rooms_sheet.get_all_values()[1:]  # تخطي header
+        rows = rooms_sheet.get_all_values()[1:]
         for r in rows:
-            if len(r) > 3:
-                doctor  = r[2].strip()  # عمود C
-                subject = r[3].strip()  # عمود D
-                if subject:
-                    if subject not in result:
-                        result[subject] = []
-                    if doctor and doctor not in result[subject]:
-                        result[subject].append(doctor)
+            doctor  = r[2].strip() if len(r) > 2 else ""
+            subject = r[3].strip() if len(r) > 3 else ""
+            if subject:  # فقط إذا عمود المادة مُعبَّأ
+                if subject not in result:
+                    result[subject] = []
+                if doctor and doctor not in result[subject]:
+                    result[subject].append(doctor)
         return result
     except:
         return {}
