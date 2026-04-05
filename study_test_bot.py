@@ -617,24 +617,36 @@ def ai_reset_model():
 # ─────────────────────────────────────────────────────
 
 def _time12_to_24(t):
-    """تحويل وقت مثل 8-10 أو 10:00-12:00 أو 12-2 إلى HH:MM - HH:MM بصيغة 24 ساعة"""
-    t = t.strip().replace("–","‐").replace("—","-").replace(" ","")
-    # فصل الجزئين
-    parts = re.split(r'[-‐]', t, maxsplit=1)
-    if len(parts) != 2:
-        return t
+    """تحويل وقت مثل 8-10 أو 10:00-12:00 أو 12-2 أو 11 إلى HH:MM - HH:MM بصيغة 24 ساعة"""
+    t = t.strip().replace("–", "-").replace("—", "-").replace("‐", "-")
+    # أزل "من الساعة" وما شابهها
+    t = re.sub(r'من\s*الساعة\s*', '', t).strip()
+    t = re.sub(r'\s+', '', t)
+
+    def _h24(h):
+        """تحويل ساعة واحدة: 1-7 مساءً (+12)، 8-12 صباحاً"""
+        h = int(h)
+        if 1 <= h <= 7:
+            h += 12
+        return h
+
     def _to24(h_str):
         h_str = h_str.strip()
         if ":" in h_str:
-            h, m = h_str.split(":", 1)
+            parts2 = h_str.split(":", 1)
+            h, m = _h24(parts2[0]), int(parts2[1])
         else:
-            h, m = h_str, "00"
-        h, m = int(h), int(m)
-        # قاعدة 12 ساعة جامعية: 8-12 صباح، 1-8 مساءً→ +12
-        if 1 <= h <= 7:
-            h += 12
+            h, m = _h24(h_str), 0
         return f"{h:02d}:{m:02d}"
-    return f"{_to24(parts[0])} - {_to24(parts[1])}"
+
+    parts = re.split(r'-', t, maxsplit=1)
+    if len(parts) == 2 and parts[1]:
+        return f"{_to24(parts[0])} - {_to24(parts[1])}"
+    elif len(parts) == 1 or not parts[1]:
+        # ساعة واحدة فقط → أضف ساعتين كنهاية افتراضية
+        h = _h24(re.sub(r':.*', '', parts[0]))
+        return f"{h:02d}:00 - {h+2:02d}:00"
+    return t
 
 def _format_schedule_card(entries, note=""):
     """بناء نص البطاقة بالتنسيق المطلوب"""
@@ -668,72 +680,82 @@ def _schedule_card_markup(short_key):
     return mk
 
 _EXTRACT_PROMPT = """\
-أنت محلل بيانات أكاديمية. مهمتك:
-1. تحديد إذا كان النص يحتوي جدولاً دراسياً (محاضرات/مواعيد دراسية).
-2. إذا يحتوي جدولاً → استخرجه. إذا لا → أرجع entries فارغة.
+أنت محلل بيانات أكاديمية متخصص وذكي. مهمتك فهم النص وتحديد إذا يحتوي جدولاً دراسياً أم لا.
 
-⚠️ مهم جداً:
-- إذا النص سؤال عادي أو طلب مساعدة أو محادثة → أرجع: {"entries": [], "note": ""}
-- إذا النص يحتوي محاضرات/مواعيد دراسية → استخرجها
+إذا النص سؤال أو محادثة عادية → أرجع: {"entries": [], "note": ""}
 
-قواعد الوقت (نظام 12 ساعة جامعي):
-- 8 أو 8-10 → 08:00 - 10:00
-- 10-12 → 10:00 - 12:00  
-- 12-2 أو 12-14 → 12:00 - 14:00
-- 1-3 → 13:00 - 15:00
-- إذا ذُكر وقت واحد فقط (مثل "من الساعة 11") → ضع الساعة كبداية وأضف ساعتين كنهاية
+إذا النص يحتوي محاضرات أو مواعيد دراسية → استخرجها بذكاء بغض النظر عن التنسيق.
 
-الشكل المطلوب (JSON فقط، بدون أي نص خارجه):
-{
-  "entries": [
-    {
-      "subject": "اسم المادة",
-      "teacher": "اسم الأستاذ بالكامل",
-      "date": "DD/MM/YYYY",
-      "time": "HH:MM - HH:MM",
-      "place": "المكان",
-      "type": "محاضرة"
-    }
-  ],
-  "note": "ملاحظات مهمة: تعديل، إجازة، تغيير أستاذ، إلخ. أو فارغ"
-}
+قواعد الوقت (افهمها بذكاء كما يفهمها الطالب اليمني):
+- الأوقات من 8 إلى 12 = صباح (8→08:00, 10→10:00, 12→12:00)
+- الأوقات من 1 إلى 7 = مساء (1→13:00, 2→14:00, 3→15:00)
+- "8-10" → "08:00 - 10:00"
+- "11-1" → "11:00 - 13:00"  
+- "12-2" → "12:00 - 14:00"
+- "من الساعة 11" (بدون نهاية) → "11:00 - 13:00"
+- تجاهل كلمات مثل "من الساعة" و"الساعة" واستخرج الأرقام فقط
 
-ملاحظات إضافية:
-- إذا كان هناك تعديل (مثل تغيير الأستاذ)، اذكر المحاضرة بشكلها النهائي المُعدَّل فقط، واذكر التعديل في note.
-- إذا ذُكر يوم إجازة أو لا يوجد دوام، أضفه في note فقط (لا تضفه كـ entry).
-- حوّل التاريخ العربي/الهجري إلى DD/MM/YYYY ميلادي.
+قواعد التاريخ:
+- حوّل أي تاريخ لصيغة DD/MM/YYYY ميلادي
+- "الأحد 5 أبريل 2026" → "05/04/2026"
+- "2026/4/5" → "05/04/2026"
+
+قواعد التعديل:
+- إذا في رسالة تعديل (تغيير أستاذ/وقت/مكان) → اذكر النسخة النهائية فقط، واشرح التعديل في note
+- إذا في إجازة → note فقط، لا entry
+
+أرجع JSON فقط بهذا الشكل الحرفي (بدون أي نص إضافي أو backticks):
+{"entries":[{"subject":"اسم المادة","teacher":"اسم الأستاذ كاملاً","date":"DD/MM/YYYY","time":"HH:MM - HH:MM","place":"المكان","type":"محاضرة"}],"note":"ملاحظة أو فارغ"}
 """
 
 def extract_schedule_from_text(raw_text):
     """
-    يستخرج الجدول من النص الحر باستخدام أول مزود AI متاح.
-    يرجع (entries_list, note_str) أو (None, None) عند الفشل.
+    يستخرج الجدول من النص - يُفضّل Gemini لدقته، ثم يجرب بقية المزودين.
+    يرجع (entries_list, note_str) أو ([], "") للنصوص غير الجدولية أو (None, None) عند الفشل.
     """
     if not AI_PROVIDERS:
         return None, None
     import json as _json
-    for provider in AI_PROVIDERS:
+
+    # ترتيب المزودين: Gemini أولاً لأنه الأدق في الاستخراج
+    sorted_providers = (
+        [p for p in AI_PROVIDERS if p["provider"] == "gemini"] +
+        [p for p in AI_PROVIDERS if p["provider"] != "gemini"]
+    )
+
+    for provider in sorted_providers:
         try:
+            full_prompt = _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text
             if provider["provider"] == "gemini":
                 url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                        f"{provider['model']}:generateContent?key={provider['api_key']}")
-                payload = {"contents": [{"parts": [{"text": _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text}]}],
-                           "generationConfig": {"temperature": 0, "maxOutputTokens": 1024}}
+                payload = {
+                    "contents": [{"parts": [{"text": full_prompt}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 1024}
+                }
                 resp = _requests.post(url, json=payload, timeout=30)
                 if resp.status_code != 200:
+                    log_error(f"Gemini extract error {resp.status_code}: {resp.text[:100]}")
                     continue
                 raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             else:
-                headers = {"Authorization": f"Bearer {provider['api_key']}", "Content-Type": "application/json"}
-                payload = {"model": provider["model"],
-                           "messages": [{"role": "user", "content": _EXTRACT_PROMPT + "\n\nالنص:\n" + raw_text}],
-                           "temperature": 0, "max_tokens": 1024}
+                headers = {
+                    "Authorization": f"Bearer {provider['api_key']}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": provider["model"],
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "temperature": 0,
+                    "max_tokens": 1024
+                }
                 url_map = {
                     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
-                    "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
-                    "deepseek": "https://api.deepseek.com/v1/chat/completions",
-                    "mistral": "https://api.mistral.ai/v1/chat/completions",
-                    "groq": "https://api.groq.com/openai/v1/chat/completions",
+                    "nvidia":     "https://integrate.api.nvidia.com/v1/chat/completions",
+                    "deepseek":   "https://api.deepseek.com/v1/chat/completions",
+                    "mistral":    "https://api.mistral.ai/v1/chat/completions",
+                    "groq":       "https://api.groq.com/openai/v1/chat/completions",
+                    "anthropic":  None,  # لا يدعم هذا الاستخدام هنا
                 }
                 ep = url_map.get(provider["provider"])
                 if not ep:
@@ -742,22 +764,25 @@ def extract_schedule_from_text(raw_text):
                 if resp.status_code != 200:
                     continue
                 raw = resp.json()["choices"][0]["message"]["content"]
-            # تنظيف وتحليل JSON
+
+            # تنظيف JSON
             raw = raw.strip()
-            raw = re.sub(r'^```(?:json)?\s*', '', raw)
-            raw = re.sub(r'\s*```$', '', raw)
+            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+            raw = re.sub(r'\s*```\s*$', '', raw)
+            raw = raw.strip()
+
             data = _json.loads(raw)
             entries = data.get("entries", [])
-            note = data.get("note", "")
-            # تحويل الوقت
-            for e in entries:
-                if e.get("time"):
-                    e["time"] = _time12_to_24(e["time"])
-            return entries, note
+            note = data.get("note", "") or ""
+
+            # الـ AI يتولى تحويل الوقت — لا نحتاج معالجة يدوية
+            return entries, note  # [] = نص عادي، [...] = جدول
+
         except Exception as ex:
-            log_error(f"extract_schedule: {ex}")
+            log_error(f"extract_schedule ({provider['provider']}): {ex}")
             continue
-    return None, None
+
+    return None, None  # فشل كل المزودين
 
 def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
     if not AI_PROVIDERS:
@@ -3493,6 +3518,51 @@ def handle_message(message):
             # الشروط غير مكتملة → تجاهل الصوت بصمت (لا رسالة خطأ)
             return
 
+    # ─── معالجة تعديل بطاقة الجدول (أولوية عالية قبل الـ AI) ───
+    if state.get("editing_schedule"):
+        short_key = state["editing_schedule"]
+        card = _schedule_cards.get(short_key)
+        if not card:
+            user_state.pop(uid, None)
+            bot.send_message(message.chat.id, "⚠️ انتهت صلاحية البطاقة.")
+            return
+        user_state.pop(uid, None)
+        # نبني سياقاً كاملاً: البيانات الحالية + التعديل المطلوب
+        current_entries_text = _format_schedule_card(card["entries"], card.get("note",""))
+        combined = (
+            f"النص الأصلي:\n{card['raw_text']}\n\n"
+            f"البيانات المستخرجة حالياً:\n{current_entries_text}\n\n"
+            f"التعديل المطلوب من المستخدم:\n{text}\n\n"
+            f"المطلوب: طبّق التعديل وأرجع JSON محدّثاً."
+        )
+        typing_edit = bot.send_message(message.chat.id, "⏳ جاري تطبيق التعديل...")
+        def _redo_extract():
+            entries, note = extract_schedule_from_text(combined)
+            try:
+                bot.delete_message(message.chat.id, typing_edit.message_id)
+            except:
+                pass
+            if entries:
+                card["entries"] = entries
+                card["note"] = note
+                card["raw_text"] = combined
+                new_card_text = _format_schedule_card(entries, note)
+                card["card_text"] = new_card_text
+                mk = _schedule_card_markup(short_key)
+                try:
+                    bot.edit_message_text(new_card_text, card["chat_id"], card["msg_id"],
+                                          parse_mode="Markdown", reply_markup=mk)
+                except:
+                    sent = bot.send_message(card["chat_id"], new_card_text,
+                                            parse_mode="Markdown", reply_markup=mk)
+                    card["msg_id"] = sent.message_id
+            else:
+                bot.send_message(message.chat.id,
+                                 "❌ لم أستطع تطبيق التعديل.\n"
+                                 "اضغط ✏️ تعديل مرة أخرى وأرسل التعديل بشكل أوضح.")
+        threading.Thread(target=_redo_extract, daemon=True).start()
+        return
+
     # ─── معالجة الأزرار (أولوية قصوى، تتجاوز الـ AI دائماً) ───
     if text in BUTTON_TEXTS and not from_voice:
         pass  # يكمل للكود العادي أدناه
@@ -3568,44 +3638,6 @@ def handle_message(message):
 
     # ─── إذا اختلت أي شرط → الرسالة تروح للبوت العادي بصمت تام ───
     # (لا يوجد أي رسالة خطأ عن AI — كأنه غير موجود)
-
-    # ─── معالجة تعديل بطاقة الجدول ───
-    if state.get("editing_schedule"):
-        short_key = state["editing_schedule"]
-        card = _schedule_cards.get(short_key)
-        if not card:
-            user_state.pop(uid, None)
-            bot.send_message(message.chat.id, "⚠️ انتهت صلاحية البطاقة.")
-            return
-        user_state.pop(uid, None)
-        # دمج النص الأصلي مع التعديل
-        combined = card["raw_text"] + "\n\nتعديل المستخدم:\n" + text
-        typing_msg = bot.send_message(message.chat.id, "⏳ جاري إعادة الاستخراج...")
-        def _redo_extract():
-            entries, note = extract_schedule_from_text(combined)
-            try:
-                bot.delete_message(message.chat.id, typing_msg.message_id)
-            except:
-                pass
-            if entries:
-                card["entries"] = entries
-                card["note"] = note
-                card["raw_text"] = combined
-                new_card_text = _format_schedule_card(entries, note)
-                card["card_text"] = new_card_text
-                mk = _schedule_card_markup(short_key)
-                try:
-                    # تعديل الرسالة الأصلية
-                    bot.edit_message_text(new_card_text, card["chat_id"], card["msg_id"],
-                                          parse_mode="Markdown", reply_markup=mk)
-                except:
-                    sent = bot.send_message(card["chat_id"], new_card_text,
-                                            parse_mode="Markdown", reply_markup=mk)
-                    card["msg_id"] = sent.message_id
-            else:
-                bot.send_message(message.chat.id, "❌ لم أستطع استخراج البيانات. حاول مرة أخرى.")
-        threading.Thread(target=_redo_extract, daemon=True).start()
-        return
 
     # ========== باقي معالجة البوت العادي ==========
     if state.get("awaiting_rename_for_approval"):
