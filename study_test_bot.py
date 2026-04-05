@@ -637,16 +637,24 @@ def _time12_to_24(t):
     return f"{_to24(parts[0])} - {_to24(parts[1])}"
 
 def _format_schedule_card(entries, note=""):
-    """بناء نص البطاقة من قائمة المدخلات"""
-    lines = ["📥 *بطاقة بيانات جاهزة للاعتماد*\n📚 *الجدول الدراسي المكتشف:*\n"]
-    for i, e in enumerate(entries, 1):
-        lines.append(f"{i}️⃣ *المادة:* {e.get('subject','')} ({e.get('teacher','')})")
+    """بناء نص البطاقة بالتنسيق المطلوب"""
+    nums = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    lines = ["📥 *بطاقة بيانات جاهزة للاعتماد*",
+             "📚 *الجدول الدراسي المكتشف:*\n"]
+    for i, e in enumerate(entries):
+        num = nums[i] if i < len(nums) else f"{i+1}."
+        teacher = e.get("teacher", "")
+        subject = e.get("subject", "")
+        subj_display = f"{subject} ({teacher})" if teacher else subject
+        entry_type = e.get("type", "محاضرة")
+        lines.append(f"{num} *المادة:* {subj_display}")
         lines.append(f"📅 *التاريخ:* {e.get('date','')}")
         lines.append(f"🕒 *الوقت:* {e.get('time','')}")
         lines.append(f"🏛️ *المكان:* {e.get('place','')}")
-        lines.append(f"📂 *النوع:* {e.get('type','محاضرة')}\n")
+        lines.append(f"📂 *النوع:* {entry_type}\n")
     if note:
-        lines.append(f"⚠️ *ملاحظة:* {note}")
+        lines.append(f"⚠️ *ملاحظة إضافية:* {note}\n")
+    lines.append("*القرار المطلوب:*")
     return "\n".join(lines)
 
 def _schedule_card_markup(short_key):
@@ -660,29 +668,40 @@ def _schedule_card_markup(short_key):
     return mk
 
 _EXTRACT_PROMPT = """\
-أنت مساعد استخراج بيانات. مهمتك فقط استخراج المحاضرات والمواعيد من النص وإرجاعها كـ JSON.
+أنت محلل بيانات أكاديمية. مهمتك:
+1. تحديد إذا كان النص يحتوي جدولاً دراسياً (محاضرات/مواعيد دراسية).
+2. إذا يحتوي جدولاً → استخرجه. إذا لا → أرجع entries فارغة.
 
-قواعد الوقت (12 ساعة جامعية):
-- الأوقات 8-12 = صباح (08:00, 09:00 ... 12:00)
-- الأوقات 1-7 = مساء (+12): مثال 1→13:00, 2→14:00, 12→12:00
+⚠️ مهم جداً:
+- إذا النص سؤال عادي أو طلب مساعدة أو محادثة → أرجع: {"entries": [], "note": ""}
+- إذا النص يحتوي محاضرات/مواعيد دراسية → استخرجها
 
-أرجع JSON فقط بهذا الشكل (بدون أي نص خارجه):
+قواعد الوقت (نظام 12 ساعة جامعي):
+- 8 أو 8-10 → 08:00 - 10:00
+- 10-12 → 10:00 - 12:00  
+- 12-2 أو 12-14 → 12:00 - 14:00
+- 1-3 → 13:00 - 15:00
+- إذا ذُكر وقت واحد فقط (مثل "من الساعة 11") → ضع الساعة كبداية وأضف ساعتين كنهاية
+
+الشكل المطلوب (JSON فقط، بدون أي نص خارجه):
 {
   "entries": [
     {
       "subject": "اسم المادة",
-      "teacher": "اسم الأستاذ",
+      "teacher": "اسم الأستاذ بالكامل",
       "date": "DD/MM/YYYY",
       "time": "HH:MM - HH:MM",
       "place": "المكان",
       "type": "محاضرة"
     }
   ],
-  "note": "أي ملاحظة مهمة مثل يوم إجازة أو تعديل"
+  "note": "ملاحظات مهمة: تعديل، إجازة، تغيير أستاذ، إلخ. أو فارغ"
 }
 
-إذا كان هناك تعديل على محاضرة سابقة (مثل تغيير الأستاذ)، اذكر المحاضرة بشكلها المُعدَّل النهائي فقط.
-إذا ذُكر يوم إجازة أو لا يوجد دوام، أضفه في حقل note فقط.
+ملاحظات إضافية:
+- إذا كان هناك تعديل (مثل تغيير الأستاذ)، اذكر المحاضرة بشكلها النهائي المُعدَّل فقط، واذكر التعديل في note.
+- إذا ذُكر يوم إجازة أو لا يوجد دوام، أضفه في note فقط (لا تضفه كـ entry).
+- حوّل التاريخ العربي/الهجري إلى DD/MM/YYYY ميلادي.
 """
 
 def extract_schedule_from_text(raw_text):
@@ -3503,20 +3522,18 @@ def handle_message(message):
                     break
         threading.Thread(target=animate_typing, daemon=True).start()
         def run_ai():
-            # ─── كشف إذا النص يحتوي جدولاً دراسياً (للأدمن/المالك فقط) ───
-            _schedule_keywords = ["محاضرة", "مقرر", "دوام", "الوقت:", "🕛", "🏛", "إشعار أكاديمي", "👨‍🏫"]
-            is_schedule_text = (user_role in ("admin", "owner") and
-                                sum(1 for kw in _schedule_keywords if kw in text) >= 2)
-
-            if is_schedule_text:
+            # ─── للأدمن/المالك: نحاول استخراج جدول أولاً ───
+            if user_role in ("admin", "owner"):
                 entries, note = extract_schedule_from_text(text)
-                try:
-                    bot.delete_message(message.chat.id, typing_msg.message_id)
-                except:
-                    pass
-                if entries:
-                    import time as _time
-                    short_key = f"sched_{int(_time.time())}_{uid}"
+                # entries = None → فشل الاستخراج كلياً
+                # entries = []   → النص ليس جدولاً
+                # entries = [...] → وُجد جدول ✅
+                if entries:  # قائمة غير فارغة = يوجد جدول
+                    try:
+                        bot.delete_message(message.chat.id, typing_msg.message_id)
+                    except:
+                        pass
+                    short_key = f"sched_{int(time.time())}_{uid}"
                     card_text = _format_schedule_card(entries, note)
                     mk = _schedule_card_markup(short_key)
                     sent = bot.send_message(message.chat.id, card_text,
@@ -3525,13 +3542,17 @@ def handle_message(message):
                         "uid": uid,
                         "entries": entries,
                         "note": note,
+                        "card_text": card_text,
                         "msg_id": sent.message_id,
                         "chat_id": message.chat.id,
                         "raw_text": text,
                     }
                     return
-                # فشل الاستخراج → رد عادي
-            response, used_model = ask_ai(uid, text, user_role=user_role, notify_fn=None, send_notify=(owner or admin))
+                # entries فارغة أو None → رسالة عادية، يكمل للرد العادي
+
+            # ─── رد عادي من الـ AI ───
+            response, used_model = ask_ai(uid, text, user_role=user_role,
+                                          notify_fn=None, send_notify=(owner or admin))
             try:
                 bot.delete_message(message.chat.id, typing_msg.message_id)
             except:
@@ -5154,12 +5175,13 @@ def handle_sched_accept(call):
             success_lines.append(f"✅ {subj} | {date} | {time_v}")
         else:
             errors.append(f"❌ فشل حفظ: {subj} {date}")
-    # تحديث الرسالة لإزالة الأزرار
-    result_text = card.get("card_text", "") + "\n\n"
+    # تحديث الرسالة لإزالة الأزرار وعرض النتيجة
     if success_lines:
-        result_text += "✅ *تم الإضافة بنجاح:*\n" + "\n".join(success_lines)
+        result_text = "✅ *تمت الإضافة للشيت بنجاح:*\n" + "\n".join(success_lines)
+    else:
+        result_text = "⚠️ لم يتم إضافة أي شيء."
     if errors:
-        result_text += "\n" + "\n".join(errors)
+        result_text += "\n\n" + "\n".join(errors)
     try:
         bot.edit_message_text(result_text, card["chat_id"], card["msg_id"],
                               parse_mode="Markdown",
