@@ -66,6 +66,11 @@ DEFAULT_TEXTS = {
 }
 
 def load_texts() -> dict:
+    """
+    يقرأ نصوص بوت التواصل من صفحة bot_texts في الشيت الرئيسي.
+    المفاتيح الخاصة ببوت التواصل موجودة في نفس الصفحة مع باقي نصوص البوت.
+    العمود A = المفتاح، العمود B = النص.
+    """
     try:
         creds_json = os.getenv("GOOGLE_CREDENTIALS")
         sheet_key  = os.getenv("SHEET_KEY")
@@ -73,13 +78,21 @@ def load_texts() -> dict:
             json.loads(creds_json),
             scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
         )
-        sheet = gspread.authorize(creds).open_by_key(sheet_key).worksheet("contact_bot")
+        sheet = gspread.authorize(creds).open_by_key(sheet_key).worksheet("bot_texts")
         rows  = sheet.get_all_values()
         texts = {}
         for row in rows:
             if len(row) >= 2 and row[0].strip():
-                texts[row[0].strip()] = row[1].strip()
-        print("✅ نصوص بوت التواصل تحملت من Sheets")
+                key = row[0].strip()
+                val = row[1].strip()
+                # فقط المفاتيح الخاصة ببوت التواصل (بدون _ تعني أنها contact_bot keys)
+                if key in DEFAULT_TEXTS and val:
+                    texts[key] = val
+        # أي مفتاح غير موجود في الشيت → يأخذ القيمة الافتراضية
+        for k, v in DEFAULT_TEXTS.items():
+            if k not in texts:
+                texts[k] = v
+        print("✅ نصوص بوت التواصل تحملت من bot_texts")
         return texts
     except Exception as e:
         print(f"⚠️ خطأ في تحميل نصوص بوت التواصل: {e}")
