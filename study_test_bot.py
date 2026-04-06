@@ -198,6 +198,25 @@ DEFAULT_BOT_TEXTS = {
     "رسالة_طلب_جهة_اتصال_en": "📲 Share your contact to facilitate communication:",
     "رسالة_شكر_اتصال_ar": "✅ شكراً! تم إرسال معلوماتك.",
     "رسالة_شكر_اتصال_en": "✅ Thank you! Your information has been sent.",
+    # ─── شاشة طلب الانضمام ───
+    "رسالة_غير_مسموح_ar": "⛔ *غير مسموح لك باستخدام البوت*\n\nللحصول على الصلاحية، يرجى مشاركة رقم هاتفك.\nاضغط على الزر أدناه لبدء العملية.",
+    "رسالة_غير_مسموح_en": "⛔ *You are not allowed to use this bot*\n\nTo get access, please share your phone number.\nPress the button below to start.",
+    "زر_مشاركة_رقم_ar": "📱 مشاركة رقمي الآن",
+    "زر_مشاركة_رقم_en": "📱 Share My Number Now",
+    "زر_لا_اريد_ar": "❌ لا أريد",
+    "زر_لا_اريد_en": "❌ No Thanks",
+    "رسالة_مشاركة_ar": "📲 *يرجى مشاركة رقم هاتفك*\n\nاضغط على الزر الكبير أدناه لمشاركة رقمك وإرسال طلب الانضمام تلقائياً.",
+    "رسالة_مشاركة_en": "📲 *Please share your phone number*\n\nPress the large button below to share your number and send a join request automatically.",
+    "زر_مشاركة_كيبورد_ar": "📱 مشاركة رقم هاتفي",
+    "زر_مشاركة_كيبورد_en": "📱 Share My Phone Number",
+    "زر_عوده_مشاركه_ar": "🔙 رجوع",
+    "زر_عوده_مشاركه_en": "🔙 Back",
+    "رسالة_لا_اريد_ar": "يرجى مشاركة رقمك للحصول على الصلاحية.\n\nإذا كان لديك استفسار أو سبب آخر، يمكنك التواصل مباشرة:",
+    "رسالة_لا_اريد_en": "Please share your number to get access.\n\nIf you have a question, you can contact us directly:",
+    "زر_بوت_تواصل_ar": "💬 بوت التواصل",
+    "زر_بوت_تواصل_en": "💬 Contact Bot",
+    "رابط_بوت_تواصل_ar": "https://t.me/nts18_bot",
+    "رابط_بوت_تواصل_en": "https://t.me/nts18_bot",
 }
 BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 
@@ -3296,29 +3315,21 @@ def start_message(message):
         if not is_pending(uid):
             pending_requests.add(uid)
 
-        # زرّان: أخضر (مشاركة) وأحمر (لا أريد)
+        # ١ - الترتيب: لا أريد أولاً (أحمر)، مشاركة ثانياً (أخضر)
         inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
         inline_markup.row(
-            telebot.types.InlineKeyboardButton("📱 مشاركة رقمي الآن", callback_data="request_contact"),
-            telebot.types.InlineKeyboardButton("❌ لا أريد", callback_data="request_contact_no"),
+            telebot.types.InlineKeyboardButton(bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
+            telebot.types.InlineKeyboardButton(bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
         )
 
-        caption = (
-            "⛔ *غير مسموح لك باستخدام البوت*\n\n"
-            "للحصول على الصلاحية، يرجى مشاركة رقم هاتفك.\n"
-            "اضغط على الزر أدناه لبدء العملية."
-        )
+        caption = bt("رسالة_غير_مسموح", uid)
 
         help_image_id = get_help_file_id("help_request_photo", "photo")
         if help_image_id:
             try:
-                bot.send_photo(
-                    message.chat.id,
-                    help_image_id,
-                    caption=caption,
-                    parse_mode="Markdown",
-                    reply_markup=inline_markup
-                )
+                bot.send_photo(message.chat.id, help_image_id,
+                               caption=caption, parse_mode="Markdown",
+                               reply_markup=inline_markup)
             except Exception as e:
                 log_error(f"فشل إرسال الصورة: {e}")
                 bot.send_message(message.chat.id, caption,
@@ -3340,29 +3351,33 @@ def handle_request_contact_confirm(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إزالة الأزرار من الرسالة السابقة
+    # زر الكيبورد الكبير
+    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=False, one_time_keyboard=True)
+    keyboard.add(telebot.types.KeyboardButton(bt("زر_مشاركة_كيبورد", uid), request_contact=True))
+
+    # ٢ - استبدال الرسالة الأولى + زر العودة تحتها
+    back_markup = telebot.types.InlineKeyboardMarkup()
+    back_markup.add(telebot.types.InlineKeyboardButton(
+        bt("زر_عوده_مشاركه", uid), callback_data="request_contact_back"
+    ))
     try:
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
-                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+        bot.edit_message_caption(
+            bt("رسالة_مشاركة", uid),
+            call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=back_markup
+        )
     except:
-        pass
+        try:
+            bot.edit_message_text(
+                bt("رسالة_مشاركة", uid),
+                call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=back_markup
+            )
+        except:
+            pass
 
-    # زر الكيبورد الكبير لمشاركة جهة الاتصال
-    keyboard = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=False,  # حجم كبير
-        one_time_keyboard=True,
-        row_width=1
-    )
-    contact_btn = telebot.types.KeyboardButton("📱 مشاركة رقم هاتفي", request_contact=True)
-    keyboard.add(contact_btn)
+    bot.send_message(call.message.chat.id, "👇", reply_markup=keyboard)
 
-    bot.send_message(
-        call.message.chat.id,
-        "📲 *يرجى مشاركة رقم هاتفك*\n\n"
-        "اضغط على الزر الكبير أدناه لمشاركة رقمك وإرسال طلب الانضمام تلقائياً.",
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
@@ -3370,30 +3385,31 @@ def handle_request_contact_no(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إزالة الأزرار من الرسالة السابقة
+    # ٣ - استبدال الرسالة الأولى بالرسالة البديلة (بدون رسالة جديدة)
+    contact_url = bt("رابط_بوت_تواصل", uid)
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(
+        bt("زر_بوت_تواصل", uid), url=contact_url
+    ))
+    markup.add(telebot.types.InlineKeyboardButton(
+        bt("زر_عوده_مشاركه", uid), callback_data="request_contact_back"
+    ))
     try:
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
-                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+        bot.edit_message_caption(
+            bt("رسالة_لا_اريد", uid),
+            call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=markup
+        )
     except:
-        pass
+        try:
+            bot.edit_message_text(
+                bt("رسالة_لا_اريد", uid),
+                call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=markup
+            )
+        except:
+            pass
 
-    # رسالة بديلة مع زر رجوع وزر بوت التواصل
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        telebot.types.InlineKeyboardButton(
-            "💬 بوت التواصل", url="https://t.me/nts18_bot"
-        ),
-        telebot.types.InlineKeyboardButton(
-            "🔙 رجوع", callback_data="request_contact_back"
-        ),
-    )
-
-    bot.send_message(
-        call.message.chat.id,
-        "يرجى مشاركة رقمك للحصول على الصلاحية.\n\n"
-        "إذا كان لديك استفسار أو سبب آخر، يمكنك التواصل مباشرة:",
-        reply_markup=markup
-    )
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_back")
 def handle_request_contact_back(call):
@@ -3401,33 +3417,25 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-    except:
-        pass
-
-    # إعادة عرض الرسالة الأصلية
     inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     inline_markup.row(
-        telebot.types.InlineKeyboardButton("📱 مشاركة رقمي الآن", callback_data="request_contact"),
-        telebot.types.InlineKeyboardButton("❌ لا أريد", callback_data="request_contact_no"),
+        telebot.types.InlineKeyboardButton(bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
+        telebot.types.InlineKeyboardButton(bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
     )
-    caption = (
-        "⛔ *غير مسموح لك باستخدام البوت*\n\n"
-        "للحصول على الصلاحية، يرجى مشاركة رقم هاتفك.\n"
-        "اضغط على الزر أدناه لبدء العملية."
-    )
-    help_image_id = get_help_file_id("help_request_photo", "photo")
-    if help_image_id:
+    caption = bt("رسالة_غير_مسموح", uid)
+    try:
+        bot.edit_message_caption(
+            caption, call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=inline_markup
+        )
+    except:
         try:
-            bot.send_photo(call.message.chat.id, help_image_id,
-                           caption=caption, parse_mode="Markdown",
-                           reply_markup=inline_markup)
-            return
+            bot.edit_message_text(
+                caption, call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=inline_markup
+            )
         except:
             pass
-    bot.send_message(call.message.chat.id, caption,
-                     parse_mode="Markdown", reply_markup=inline_markup)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
