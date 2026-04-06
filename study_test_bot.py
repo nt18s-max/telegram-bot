@@ -621,36 +621,48 @@ def ai_reset_model():
 # ─────────────────────────────────────────────────────
 
 def _time12_to_24(t):
-    """تحويل وقت مثل 8-10 أو 10:00-12:00 أو 12-2 أو 11 إلى HH:MM - HH:MM بصيغة 24 ساعة"""
-    t = t.strip().replace("–", "-").replace("—", "-").replace("‐", "-")
-    # أزل "من الساعة" وما شابهها
-    t = re.sub(r'من\s*الساعة\s*', '', t).strip()
-    t = re.sub(r'\s+', '', t)
+    """
+    يحوّل الوقت بأي تنسيق:
+    - ساعتان (10-12) → HH:MM - HH:MM
+    - ساعة واحدة (من 11) → HH:MM فقط بدون نهاية
+    يقبل: عربي/إنجليزي، أرقام عربية، أي فاصل
+    """
+    if not t:
+        return t
+    t = str(t).strip()
+    # تحويل الأرقام العربية
+    t = t.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+    # إزالة كلمات زائدة
+    t = re.sub(r'من\s*الساعة|من\s+|الساعة\s*|إلى\s*|الى\s*|حتى\s*|\b(am|pm|ص|م)\b',
+               ' ', t, flags=re.IGNORECASE)
+    t = re.sub(r'[–—]', '-', t)
+    t = t.strip()
 
-    def _h24(h):
-        """تحويل ساعة واحدة: 1-7 مساءً (+12)، 8-12 صباحاً"""
-        h = int(h)
+    nums = re.findall(r'\d{1,2}(?:[.:]\d{2})?', t)
+
+    def _h24(s):
+        s = str(s).replace(':', '.').replace(',', '.')
+        if '.' in s:
+            h, m = int(s.split('.')[0]), int(s.split('.')[1])
+        else:
+            h, m = int(s), 0
         if 1 <= h <= 7:
             h += 12
-        return h
+        return h, m
 
-    def _to24(h_str):
-        h_str = h_str.strip()
-        if ":" in h_str:
-            parts2 = h_str.split(":", 1)
-            h, m = _h24(parts2[0]), int(parts2[1])
+    try:
+        if len(nums) >= 2:
+            h1, m1 = _h24(nums[0])
+            h2, m2 = _h24(nums[1])
+            return f"{h1:02d}:{m1:02d} - {h2:02d}:{m2:02d}"
+        elif len(nums) == 1:
+            # ساعة واحدة فقط → بدون نهاية
+            h1, m1 = _h24(nums[0])
+            return f"{h1:02d}:{m1:02d}"
         else:
-            h, m = _h24(h_str), 0
-        return f"{h:02d}:{m:02d}"
-
-    parts = re.split(r'-', t, maxsplit=1)
-    if len(parts) == 2 and parts[1]:
-        return f"{_to24(parts[0])} - {_to24(parts[1])}"
-    elif len(parts) == 1 or not parts[1]:
-        # ساعة واحدة فقط → أضف ساعتين كنهاية افتراضية
-        h = _h24(re.sub(r':.*', '', parts[0]))
-        return f"{h:02d}:00 - {h+2:02d}:00"
-    return t
+            return t
+    except:
+        return t
 
 def _format_schedule_card(entries, note=""):
     """بناء نص البطاقة بالتنسيق المطلوب"""
@@ -889,6 +901,7 @@ def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
 # ─────────────────────────────────────────────────────
 AI_ALLOWED_COL = 9
 AUTO_PUBLISH_COL = 10
+AI_SWITCH_COL = 11   # عمود L — حالة سويتش الذكاء الاصطناعي (يحفظها المستخدم)
 
 def get_users():
     try:
@@ -1017,7 +1030,8 @@ def load_user_lang(uid):
 def add_user_to_sheet(name, uid, auto=False, allowed=True):
     try:
         display = f"🆕 {name}" if auto else name
-        users_sheet.append_row([display, "", uid, allowed, False, False, False, False, False, False, False],
+        # الأعمدة: الاسم، الهاتف، ID، allowed، admin، owner، lang، log، ai_allowed، auto_publish، ai_switch
+        users_sheet.append_row([display, "", uid, allowed, False, False, False, False, False, False, False, False],
                                 value_input_option="USER_ENTERED")
         return True
     except:
@@ -1063,6 +1077,37 @@ def set_user_auto_publish(uid, enabled):
 def load_user_auto_publish(uid):
     if uid not in user_auto_publish:
         user_auto_publish[uid] = get_user_auto_publish(uid)
+
+def get_user_ai_switch(uid):
+    """يقرأ حالة سويتش الذكاء الاصطناعي من الشيت"""
+    try:
+        uid_str = str(uid)
+        for row in users_sheet.get_all_values()[1:]:
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                val = row[AI_SWITCH_COL].strip().upper() if len(row) > AI_SWITCH_COL else "FALSE"
+                return val == "TRUE"
+        return False
+    except:
+        return False
+
+def set_user_ai_switch(uid, enabled):
+    """يحفظ حالة سويتش الذكاء الاصطناعي في الشيت"""
+    try:
+        uid_str = str(uid)
+        rows = users_sheet.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) > 2 and row[2].strip().lstrip("'") == uid_str:
+                users_sheet.update_cell(i, AI_SWITCH_COL + 1, enabled)
+                return True
+        return False
+    except Exception as e:
+        log_error(f"set_user_ai_switch: {e}")
+        return False
+
+def load_user_ai_switch(uid):
+    """يُحمِّل حالة السويتش من الشيت إذا لم تكن محفوظة في الذاكرة"""
+    if uid not in user_ai_enabled:
+        user_ai_enabled[uid] = get_user_ai_switch(uid)
 
 def find_user_row_by_id(search_id):
     try:
@@ -3035,11 +3080,11 @@ def check_lecture_conflict(date, time_val):
     return None
 
 def normalize_time(t):
-    t = t.strip().replace("–", "-").replace("—", "-")
-    t = re.sub(r'\s*-\s*', ' - ', t)
-    def pad(m):
-        return f"{int(m.group(1)):02d}:{m.group(2)}"
-    return re.sub(r'(\d{1,2}):(\d{2})', pad, t)
+    """
+    يحوّل الوقت بأي تنسيق إلى HH:MM - HH:MM بنظام 24 ساعة.
+    يقبل: 10-12 | 8:00-10 | من 11 | ١٠-١٢ | 10 to 12 | من الساعة 8 الى 10
+    """
+    return _time12_to_24(t)
 
 def parse_time_range(t):
     t = normalize_time(t)
@@ -3251,10 +3296,12 @@ def start_message(message):
         if not is_pending(uid):
             pending_requests.add(uid)
 
-        inline_markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-        inline_markup.add(telebot.types.InlineKeyboardButton(
-            "📱 مشاركة رقمي الآن", callback_data="request_contact"
-        ))
+        # زرّان: أخضر (مشاركة) وأحمر (لا أريد)
+        inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        inline_markup.row(
+            telebot.types.InlineKeyboardButton("📱 مشاركة رقمي الآن", callback_data="request_contact"),
+            telebot.types.InlineKeyboardButton("❌ لا أريد", callback_data="request_contact_no"),
+        )
 
         caption = (
             "⛔ *غير مسموح لك باستخدام البوت*\n\n"
@@ -3274,19 +3321,11 @@ def start_message(message):
                 )
             except Exception as e:
                 log_error(f"فشل إرسال الصورة: {e}")
-                bot.send_message(
-                    message.chat.id,
-                    caption,
-                    parse_mode="Markdown",
-                    reply_markup=inline_markup
-                )
+                bot.send_message(message.chat.id, caption,
+                                 parse_mode="Markdown", reply_markup=inline_markup)
         else:
-            bot.send_message(
-                message.chat.id,
-                caption,
-                parse_mode="Markdown",
-                reply_markup=inline_markup
-            )
+            bot.send_message(message.chat.id, caption,
+                             parse_mode="Markdown", reply_markup=inline_markup)
         return
 
     user_state.pop(uid, None)
@@ -3299,21 +3338,96 @@ def start_message(message):
 def handle_request_contact_confirm(call):
     uid = call.from_user.id
     load_user_lang(uid)
-    bot.answer_callback_query(call.id, "📱 جاري تحضير زر المشاركة...")
+    bot.answer_callback_query(call.id)
+
+    # إزالة الأزرار من الرسالة السابقة
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+
+    # زر الكيبورد الكبير لمشاركة جهة الاتصال
     keyboard = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True,
+        resize_keyboard=False,  # حجم كبير
         one_time_keyboard=True,
         row_width=1
     )
-    keyboard.add(telebot.types.KeyboardButton("📱 مشاركة رقم هاتفي الآن", request_contact=True))
+    contact_btn = telebot.types.KeyboardButton("📱 مشاركة رقم هاتفي", request_contact=True)
+    keyboard.add(contact_btn)
+
     bot.send_message(
         call.message.chat.id,
-        "✅ *تم اختيار مشاركة الرقم!*\n\n"
-        "اضغط على الزر الكبير أدناه لمشاركة رقم هاتفك مع المالك.\n"
-        "سيتم إرسال طلب انضمام تلقائياً.",
+        "📲 *يرجى مشاركة رقم هاتفك*\n\n"
+        "اضغط على الزر الكبير أدناه لمشاركة رقمك وإرسال طلب الانضمام تلقائياً.",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
+
+@bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
+def handle_request_contact_no(call):
+    uid = call.from_user.id
+    load_user_lang(uid)
+    bot.answer_callback_query(call.id)
+
+    # إزالة الأزرار من الرسالة السابقة
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=telebot.types.InlineKeyboardMarkup())
+    except:
+        pass
+
+    # رسالة بديلة مع زر رجوع وزر بوت التواصل
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        telebot.types.InlineKeyboardButton(
+            "💬 بوت التواصل", url="https://t.me/nts18_bot"
+        ),
+        telebot.types.InlineKeyboardButton(
+            "🔙 رجوع", callback_data="request_contact_back"
+        ),
+    )
+
+    bot.send_message(
+        call.message.chat.id,
+        "يرجى مشاركة رقمك للحصول على الصلاحية.\n\n"
+        "إذا كان لديك استفسار أو سبب آخر، يمكنك التواصل مباشرة:",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "request_contact_back")
+def handle_request_contact_back(call):
+    uid = call.from_user.id
+    load_user_lang(uid)
+    bot.answer_callback_query(call.id)
+
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+
+    # إعادة عرض الرسالة الأصلية
+    inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    inline_markup.row(
+        telebot.types.InlineKeyboardButton("📱 مشاركة رقمي الآن", callback_data="request_contact"),
+        telebot.types.InlineKeyboardButton("❌ لا أريد", callback_data="request_contact_no"),
+    )
+    caption = (
+        "⛔ *غير مسموح لك باستخدام البوت*\n\n"
+        "للحصول على الصلاحية، يرجى مشاركة رقم هاتفك.\n"
+        "اضغط على الزر أدناه لبدء العملية."
+    )
+    help_image_id = get_help_file_id("help_request_photo", "photo")
+    if help_image_id:
+        try:
+            bot.send_photo(call.message.chat.id, help_image_id,
+                           caption=caption, parse_mode="Markdown",
+                           reply_markup=inline_markup)
+            return
+        except:
+            pass
+    bot.send_message(call.message.chat.id, caption,
+                     parse_mode="Markdown", reply_markup=inline_markup)
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
@@ -3325,6 +3439,7 @@ def ai_command(message):
         bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
         return
     user_ai_enabled[uid] = True
+    threading.Thread(target=set_user_ai_switch, args=(uid, True), daemon=True).start()
     default_model = AI_PROVIDERS[0] if AI_PROVIDERS else {"icon": "❌", "name": "غير متاح"}
     bot.send_message(
         message.chat.id,
@@ -3574,6 +3689,8 @@ def handle_file(message):
 def handle_message(message):
     uid = message.from_user.id
     load_user_lang(uid)
+    load_user_ai_switch(uid)
+    load_user_auto_publish(uid)   # تحميل حالة النشر التلقائي من الشيت
     welcome, rejection = get_settings()
     allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
     is_allowed = open_all or uid in allowed
@@ -3867,10 +3984,13 @@ def handle_message(message):
                     reply_markup=markup
                 )
                 return
-            # لديه صلاحية → تبديل السويتش
+            # لديه صلاحية → تبديل السويتش وحفظه في الشيت
             current = user_ai_enabled.get(uid, False)
-            user_ai_enabled[uid] = not current
-            if user_ai_enabled[uid]:
+            new_state = not current
+            user_ai_enabled[uid] = new_state
+            # حفظ في الشيت في ثريد منفصل لعدم إبطاء الاستجابة
+            threading.Thread(target=set_user_ai_switch, args=(uid, new_state), daemon=True).start()
+            if new_state:
                 bot.send_message(
                     message.chat.id,
                     f"✅ تم تفعيل مساعد نايف!\n\n"
@@ -4518,11 +4638,18 @@ def handle_message(message):
                     time_val = TIME_MAP[text]
                 elif text == "⏰ توقيت آخر":
                     user_state[uid]["step"] = "enter_time_custom"
-                    bot.send_message(message.chat.id, "أدخل الوقت:\n`08:00 - 09:30`", parse_mode="Markdown", reply_markup=back_with_noexist(uid))
+                    bot.send_message(message.chat.id,
+                                     "⏰ أدخل الوقت بأي تنسيق:\n"
+                                     "• `10-12` أو `10:00-12:00`\n"
+                                     "• `من 11` (ساعتان تلقائياً)\n"
+                                     "• `١٠-١٢` (أرقام عربية)\n"
+                                     "• `10 to 12`",
+                                     parse_mode="Markdown", reply_markup=back_with_noexist(uid))
                     return
                 elif text == "لا يوجد":
                     time_val = "لا يوجد"
                 else:
+                    # أي نص آخر → حاول تحويله مباشرة
                     time_val = normalize_time(text)
                 _process_lecture_time(message.chat.id, uid, state, time_val, admin, owner)
                 return
