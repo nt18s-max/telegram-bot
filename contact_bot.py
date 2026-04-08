@@ -1,5 +1,5 @@
 # ====================================================
-# bot2.py — بوت التواصل
+# contact_bot.py — بوت التواصل
 # ====================================================
 import json
 import logging
@@ -65,12 +65,51 @@ DEFAULT_TEXTS = {
     ),
 }
 
-def load_texts() -> dict:
+# ── نصوص ثنائية اللغة (ar/en) ─────────────────────────
+# يُملأ من load_texts()، المفتاح = اسم النص، القيمة = {"ar": ..., "en": ...}
+TEXTS_BILINGUAL: dict[str, dict] = {}
+
+# ── TEXTS أحادي اللغة (للتوافق مع باقي الكود) ───────────
+TEXTS: dict[str, str] = {}
+
+# ── لغة كل مستخدم ─────────────────────────────────────
+user_lang: dict[int, str] = {}
+
+def _get_text(key: str, lang: str = "ar") -> str:
+    """يجلب النص بالعربي أو الإنجليزي مع fallback للافتراضي."""
+    if key in TEXTS_BILINGUAL:
+        entry = TEXTS_BILINGUAL[key]
+        text = entry.get(lang) or entry.get("ar") or ""
+        if text:
+            return text
+    # fallback → القيمة الأحادية اللغة القديمة
+    if key in TEXTS:
+        return TEXTS[key]
+    # fallback → الافتراضي
+    return DEFAULT_TEXTS.get(key, key)
+
+def tx(key: str, uid: int = None, **fmt) -> str:
+    """اختصار: يجلب النص بلغة المستخدم ويطبّق format إن وُجد."""
+    lang = user_lang.get(uid, "ar") if uid else "ar"
+    text = _get_text(key, lang)
+    if fmt:
+        try:
+            text = text.format(**fmt)
+        except Exception:
+            pass
+    return text
+
+# ── تحميل النصوص من الشيت ─────────────────────────────
+def load_texts() -> None:
     """
-    يقرأ نصوص بوت التواصل من صفحة bot_texts في الشيت الرئيسي.
-    المفاتيح الخاصة ببوت التواصل موجودة في نفس الصفحة مع باقي نصوص البوت.
-    العمود A = المفتاح، العمود B = النص.
+    يقرأ من صفحة bot_texts:
+      العمود A = المفتاح
+      العمود B = النص العربي
+      العمود C = النص الإنجليزي (اختياري)
+
+    يملأ TEXTS_BILINGUAL و TEXTS (للتوافق الخلفي).
     """
+    global TEXTS_BILINGUAL, TEXTS
     try:
         creds_json = os.getenv("GOOGLE_CREDENTIALS")
         sheet_key  = os.getenv("SHEET_KEY")
@@ -78,32 +117,48 @@ def load_texts() -> dict:
             json.loads(creds_json),
             scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
         )
-        sheet = gspread.authorize(creds).open_by_key(sheet_key).worksheet("bot_texts")
-        rows  = sheet.get_all_values()
-        texts = {}
+        ws   = gspread.authorize(creds).open_by_key(sheet_key).worksheet("bot_texts")
+        rows = ws.get_all_values()
+
+        bilingual = {}
+        mono      = {}
+
         for row in rows:
-            if len(row) >= 2 and row[0].strip():
-                key = row[0].strip()
-                val = row[1].strip()
-                # فقط المفاتيح الخاصة ببوت التواصل (بدون _ تعني أنها contact_bot keys)
-                if key in DEFAULT_TEXTS and val:
-                    texts[key] = val
-        # أي مفتاح غير موجود في الشيت → يأخذ القيمة الافتراضية
+            # نتجاهل صفوف الهيدر أو الفارغة
+            if not row or not row[0].strip():
+                continue
+            key    = row[0].strip()
+            ar_val = row[1].strip() if len(row) > 1 else ""
+            en_val = row[2].strip() if len(row) > 2 else ""
+
+            # نخزّن فقط المفاتيح المعروفة لبوت التواصل
+            if key not in DEFAULT_TEXTS:
+                continue
+
+            bilingual[key] = {
+                "ar": ar_val or DEFAULT_TEXTS.get(key, ""),
+                "en": en_val or ar_val or DEFAULT_TEXTS.get(key, ""),
+            }
+            # TEXTS الأحادي → العربي (للتوافق مع الكود القديم)
+            mono[key] = ar_val or DEFAULT_TEXTS.get(key, "")
+
+        # أي مفتاح غير موجود في الشيت → القيمة الافتراضية
         for k, v in DEFAULT_TEXTS.items():
-            if k not in texts:
-                texts[k] = v
-        print("✅ نصوص بوت التواصل تحملت من bot_texts")
-        return texts
+            if k not in bilingual:
+                bilingual[k] = {"ar": v, "en": v}
+            if k not in mono:
+                mono[k] = v
+
+        TEXTS_BILINGUAL = bilingual
+        TEXTS           = mono
+        print(f"✅ نصوص بوت التواصل تحملت من bot_texts ({len(bilingual)} مفتاح)")
+
     except Exception as e:
-        print(f"⚠️ خطأ في تحميل نصوص بوت التواصل: {e}")
-        return DEFAULT_TEXTS
+        print(f"⚠️ خطأ في تحميل نصوص بوت التواصل: {e} — سيتم استخدام الافتراضي")
+        TEXTS_BILINGUAL = {k: {"ar": v, "en": v} for k, v in DEFAULT_TEXTS.items()}
+        TEXTS           = dict(DEFAULT_TEXTS)
 
-TEXTS = load_texts()
-for key in ["owner_notification", "stats_text"]:
-    if key not in TEXTS:
-        TEXTS[key] = DEFAULT_TEXTS[key]
-
-# ── Google Sheets ──────────────────────────────────────
+# ── Google Sheets — جلب الأدمن ────────────────────────
 def _get_users_sheet():
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
     sheet_key  = os.getenv("SHEET_KEY")
@@ -114,7 +169,7 @@ def _get_users_sheet():
     return gspread.authorize(creds).open_by_key(sheet_key).worksheet("المستخدمين")
 
 def get_contact_bot_admins() -> list:
-    """يجلب IDs اللي عندهم TRUE في عمود bot 2 (I) من شيت المستخدمين"""
+    """يجلب IDs اللي عندهم TRUE في عمود bot 2 (I) من شيت المستخدمين."""
     try:
         rows = _get_users_sheet().get_all_values()
         admins = []
@@ -122,7 +177,8 @@ def get_contact_bot_admins() -> list:
         for row in rows[1:]:
             if not row or not any(c.strip() for c in row):
                 empty_streak += 1
-                if empty_streak >= 5: break
+                if empty_streak >= 5:
+                    break
                 continue
             empty_streak = 0
             uid_str  = row[2].strip().lstrip("'") if len(row) > 2 else ""
@@ -160,59 +216,77 @@ def admin_keyboard():
 
 # ── Handlers ──────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
     if is_admin(update):
         await update.message.reply_text("👑 لوحة التحكم:", reply_markup=admin_keyboard())
         return ConversationHandler.END
     db = load_db()
-    if update.message.from_user.id in db["blocked"]:
-        await update.message.reply_text(TEXTS["blocked"])
+    if uid in db["blocked"]:
+        await update.message.reply_text(tx("blocked", uid))
         return ConversationHandler.END
-    await update.message.reply_text(TEXTS["welcome"])
+    await update.message.reply_text(tx("welcome", uid))
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = load_db()
-    if update.message.from_user.id in db["blocked"]:
-        await update.message.reply_text(TEXTS["blocked"])
+    uid = update.message.from_user.id
+    db  = load_db()
+    if uid in db["blocked"]:
+        await update.message.reply_text(tx("blocked", uid))
         return ConversationHandler.END
     context.user_data["name"] = update.message.text
-    await update.message.reply_text(TEXTS["ask_message"].format(name=update.message.text))
+    await update.message.reply_text(tx("ask_message", uid, name=update.message.text))
     return MESSAGE
 
 async def get_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db   = load_db()
     user = update.message.from_user
+    uid  = user.id
     name = context.user_data.get("name", "غير معروف")
     msg  = update.message.text
-    time = now_str()
-    db["messages"].append({"user_id": user.id, "username": user.username or "", "name": name, "message": msg, "time": time})
+    time_str = now_str()
+
+    db["messages"].append({
+        "user_id":  uid,
+        "username": user.username or "",
+        "name":     name,
+        "message":  msg,
+        "time":     time_str,
+    })
     save_db(db)
 
-    profile_link = f"[@{user.username}](t.me/{user.username})" if user.username else f"[فتح الحساب](tg://user?id={user.id}) _(بدون يوزر)_"
+    profile_link = (
+        f"[@{user.username}](t.me/{user.username})"
+        if user.username
+        else f"[فتح الحساب](tg://user?id={uid}) _(بدون يوزر)_"
+    )
 
-    notification = TEXTS["owner_notification"].format(
+    notification = tx("owner_notification").format(
         name=name, profile_link=profile_link,
-        user_id=user.id, time=time, message=msg
+        user_id=uid, time=time_str, message=msg,
     )
 
     for admin_id in get_contact_bot_admins():
         try:
-            await context.bot.send_message(chat_id=admin_id, text=notification, parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=admin_id, text=notification, parse_mode="Markdown")
         except Exception as e:
             logging.warning(f"فشل إرسال إشعار لـ {admin_id}: {e}")
 
     if db["away"]["active"]:
-        await update.message.reply_text(TEXTS["away_reply"].format(return_time=db["away"]["return_time"]))
+        await update.message.reply_text(
+            tx("away_reply", uid, return_time=db["away"]["return_time"]))
     else:
-        await update.message.reply_text(TEXTS["sent_success"])
+        await update.message.reply_text(tx("sent_success", uid))
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(TEXTS["cancel"])
+    uid = update.message.from_user.id
+    await update.message.reply_text(tx("cancel", uid))
     return ConversationHandler.END
 
 async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
+    if not is_admin(update):
+        return
     if not context.args:
         await update.message.reply_text("الاستخدام: /block [user_id]")
         return
@@ -226,7 +300,8 @@ async def block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(TEXTS["block_success"].format(user_id=user_id))
 
 async def unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
+    if not is_admin(update):
+        return
     if not context.args:
         await update.message.reply_text("الاستخدام: /unblock [user_id]")
         return
@@ -240,7 +315,8 @@ async def unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(TEXTS["unblock_success"].format(user_id=user_id))
 
 async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
+    if not is_admin(update):
+        return
     return_time = " ".join(context.args) if context.args else "قريباً"
     db = load_db()
     db["away"] = {"active": True, "return_time": return_time}
@@ -248,38 +324,47 @@ async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(TEXTS["away_on"].format(return_time=return_time))
 
 async def remove_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
+    if not is_admin(update):
+        return
     db = load_db()
     db["away"] = {"active": False, "return_time": ""}
     save_db(db)
     await update.message.reply_text(TEXTS["away_off"])
 
 async def reply_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
+    if not is_admin(update):
+        return
     if len(context.args) < 2:
         await update.message.reply_text(TEXTS["reply_usage"])
         return
     user_id   = int(context.args[0])
     reply_msg = " ".join(context.args[1:])
-    await context.bot.send_message(chat_id=user_id, text=TEXTS["reply_received"].format(message=reply_msg))
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=TEXTS["reply_received"].format(message=reply_msg),
+    )
     await update.message.reply_text(TEXTS["reply_sent"])
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update): return
-    db    = load_db()
-    msgs  = db["messages"]
-    now   = datetime.now(ZoneInfo(TIMEZONE))
+    if not is_admin(update):
+        return
+    db        = load_db()
+    msgs      = db["messages"]
+    now       = datetime.now(ZoneInfo(TIMEZONE))
     today     = now.strftime("%Y-%m-%d")
     week_ago  = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     month_ago = (now - timedelta(days=30)).strftime("%Y-%m-%d")
     await update.message.reply_text(TEXTS["stats_text"].format(
         today=sum(1 for m in msgs if m["time"][:10] == today),
-        week=sum(1 for m in msgs if m["time"][:10] >= week_ago),
+        week =sum(1 for m in msgs if m["time"][:10] >= week_ago),
         month=sum(1 for m in msgs if m["time"][:10] >= month_ago),
-        total=len(msgs)
+        total=len(msgs),
     ))
 
+# ── تشغيل ─────────────────────────────────────────────
 def run():
+    load_texts()
+
     async def post_init(application):
         await application.bot.set_my_commands([
             BotCommand("start",  "ارسل رسالة"),
@@ -309,3 +394,6 @@ def run():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     app.run_polling()
+
+if __name__ == "__main__":
+    run()
