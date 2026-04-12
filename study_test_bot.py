@@ -922,7 +922,26 @@ AI_ALLOWED_COL = 9
 AUTO_PUBLISH_COL = 10
 AI_SWITCH_COL = 11   # عمود L — حالة سويتش الذكاء الاصطناعي (يحفظها المستخدم)
 
+# ─── Cache للمستخدمين (يمنع Bug الصلاحية الزائفة) ───
+_users_cache = {"data": None, "ts": 0}
+_USERS_CACHE_TTL = 30  # ثانية
+
+# ─── Cache للبيانات الرئيسية (sheet data) ───
+_sheet_data_cache = {"data": None, "ts": 0}
+_bot_texts_cache  = {"data": None, "ts": 0}
+_SHEET_CACHE_TTL  = 60  # ثانية — يُحدَّث تلقائياً كل دقيقة
+
+def invalidate_users_cache():
+    """إبطال الـ cache فوراً عند أي تغيير في الصلاحيات"""
+    _users_cache["data"] = None
+    _users_cache["ts"] = 0
+
 def get_users():
+    global _users_cache
+    now = time.time()
+    # إذا الـ cache صالح → أعد البيانات مباشرة بدون قراءة الشيت
+    if _users_cache["data"] is not None and now - _users_cache["ts"] < _USERS_CACHE_TTL:
+        return _users_cache["data"]
     try:
         allowed, admins, owners, log_ids, ai_allowed, auto_publish_uids = [], [], [], [], [], []
         open_all = admin_all = False
@@ -963,9 +982,15 @@ def get_users():
                 ai_allowed.append(uid)
             if auto_val == "TRUE":
                 auto_publish_uids.append(uid)
-        return allowed, admins, owners, open_all, admin_all, log_ids, ai_allowed, auto_publish_uids
+        result = (allowed, admins, owners, open_all, admin_all, log_ids, ai_allowed, auto_publish_uids)
+        _users_cache["data"] = result
+        _users_cache["ts"] = time.time()
+        return result
     except Exception as e:
         log_error(f"get_users: {e}")
+        # fallback → آخر بيانات معروفة بدلاً من قائمة فارغة تسبب رفض زائف
+        if _users_cache["data"] is not None:
+            return _users_cache["data"]
         return [], [], [], False, False, [], [], []
 
 def get_owner_ids():
@@ -1124,7 +1149,14 @@ def set_user_ai_switch(uid, enabled):
         return False
 
 def load_user_ai_switch(uid):
-    """يُحمِّل حالة السويتش من الشيت إذا لم تكن محفوظة في الذاكرة"""
+    """
+    يُحمِّل حالة السويتش من الشيت.
+    - إذا AI_PROVIDERS فارغة → السويتش دائماً False في الذاكرة (الزر مخفي)
+    - إذا AI_PROVIDERS موجودة → يقرأ الحالة المحفوظة في الشيت (تعلّمها حتى بعد إعادة التشغيل)
+    """
+    if not AI_PROVIDERS:
+        user_ai_enabled[uid] = False
+        return
     if uid not in user_ai_enabled:
         user_ai_enabled[uid] = get_user_ai_switch(uid)
 
@@ -1227,14 +1259,29 @@ def is_valid_date(d):
             continue
     return False
 
+def invalidate_sheet_cache():
+    """إبطال cache البيانات فوراً (عند الكتابة أو طلب تحديث يدوي)"""
+    _sheet_data_cache["data"] = None
+    _sheet_data_cache["ts"]   = 0
+    _bot_texts_cache["data"]  = None
+    _bot_texts_cache["ts"]    = 0
+
 def get_data():
+    global _sheet_data_cache
+    now = time.time()
+    if _sheet_data_cache["data"] is not None and now - _sheet_data_cache["ts"] < _SHEET_CACHE_TTL:
+        return _sheet_data_cache["data"]
     try:
         useful = []
         for r in sheet.get_all_values()[1:]:
             if any(len(r) > i and r[i].strip() for i in range(2, 8)):
                 useful.append(r)
+        _sheet_data_cache["data"] = useful
+        _sheet_data_cache["ts"]   = now
         return useful
     except:
+        if _sheet_data_cache["data"] is not None:
+            return _sheet_data_cache["data"]
         return []
 
 def save_lecture(date, subject, time_val, room):
@@ -1254,6 +1301,7 @@ def save_lecture(date, subject, time_val, room):
         new_row[2] = time_val
         new_row[3] = room
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        invalidate_sheet_cache()
         log_info(f"save_lecture: إضافة جديدة | {subject} | {date} | {time_val} | {room}")
         # إشعار تلقائي
         all_users, _ = get_all_user_ids()
@@ -1273,12 +1321,14 @@ def save_text_to_cell(date, subject, col, text_val):
                 existing_fids = get_file_ids(safe_get(row, col))
                 new_val = text_val if not existing_fids else f"{text_val}|{','.join(existing_fids)}"
                 sheet.update_cell(i, col + 1, new_val)
+                invalidate_sheet_cache()
                 return True
         new_row = [""] * 8
         new_row[0] = date
         new_row[1] = subject
         new_row[col] = text_val
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        invalidate_sheet_cache()
         # إشعار تلقائي
         type_name = {4: "تكليف", 6: "ملخص", 7: "تنبيه"}.get(col, "بيانات")
         icon = {4: "📝", 6: "📖", 7: "⚠️"}.get(col, "📌")
@@ -1310,6 +1360,7 @@ def save_file_to_cell(date, subject, col, fids, merge=False):
                 current = safe_get(row, col)
                 all_fids = (get_file_ids(current) + fids) if merge else fids
                 sheet.update_cell(i, col + 1, merge_cell(get_text(current), all_fids))
+                invalidate_sheet_cache()
                 return True
         new_row = [""] * 8
         new_row[0] = date
@@ -1655,6 +1706,7 @@ def load_button_texts():
     for key in button_keys:
         BUTTON_TEXTS.add(bt(key))
     BUTTON_TEXTS.update([
+        "↩️ رجوع خطوة",
         "🤖 مساعد نايف", "🟢 🤖 مساعد نايف", "🔴 🤖 مساعد نايف",
         "📢 النشر التلقائي", "🔕 النشر التلقائي",
         "📤 إرسال الآن", "✅ إرسال", "➕ إضافة محاضرة أخرى",
@@ -1695,6 +1747,12 @@ def main_menu(uid, admin=False, owner=False):
 def back_only_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add(bt("زر_عوده", uid))
+    return m
+
+def back_step_menu(uid):
+    """زر رجوع خطوة + خروج — يُستخدم داخل flows متعددة الخطوات"""
+    m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
     return m
 
 def back_skip_menu(uid):
@@ -1762,13 +1820,13 @@ def edit_data_menu(uid):
 def edit_action_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add(bt("زر_تعديل_زرار", uid), bt("زر_حذف_زرار", uid))
-    m.add(bt("زر_عوده", uid))
+    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
     return m
 
 def buildings_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("🏛 القديم", "🏫 الاداب")
-    m.add(bt("زر_عوده", uid))
+    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
     return m
 
 def rooms_menu_kb(building, uid):
@@ -1783,7 +1841,8 @@ def lecture_time_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("🕐 08:00 - 10:00", "🕐 10:00 - 12:00")
     m.add("🕐 12:00 - 14:00", "⏰ توقيت آخر")
-    m.add("لا يوجد", bt("زر_عوده", uid))
+    m.add("لا يوجد")
+    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
     return m
 
 def manage_users_menu(uid):
@@ -1902,17 +1961,48 @@ def get_subjects_with_doctors():
     except:
         return {}
 
-def send_date_suggestions(chat_id, subject=None, for_lecture=False, for_alert=False, uid=None):
+def get_last_lectures_for_subject(subject, n=3):
+    try:
+        seen, dates = set(), []
+        for r in get_data():
+            s = safe_get(r, 1); d = safe_get(r, 0); t = safe_get(r, 2)
+            if s == subject and d and t:
+                p = parse_date(d)
+                if p not in seen:
+                    seen.add(p); dates.append(p)
+        dates.sort(key=lambda x: datetime.strptime(x, "%d/%m/%Y"), reverse=True)
+        return dates[:n]
+    except:
+        return []
+
+def date_suggestions_menu(subject=None, for_lecture=False, for_alert=False, uid=None):
+    """يرجع ReplyKeyboardMarkup بأزرار التواريخ المقترحة: أمس + اليوم + غد"""
     now = datetime.now(YEMEN_TZ)
-    today = now.strftime("%d/%m/%Y")
-    tmrw = (now + timedelta(days=1)).strftime("%d/%m/%Y")
+    yesterday = (now - timedelta(days=1)).strftime("%d/%m/%Y")
+    today     = now.strftime("%d/%m/%Y")
+    tmrw      = (now + timedelta(days=1)).strftime("%d/%m/%Y")
     if for_lecture or for_alert:
-        lines = [f"`{tmrw}`", f"`{today}`"]
+        dates = [yesterday, today, tmrw]
     else:
-        lines = [f"`{today}`"]
-    lines = lines[:4]
-    msg = "📅 تواريخ مقترحة (اضغط للنسخ):\n\n" + "\n".join(lines)
-    bot.send_message(chat_id, msg, parse_mode="Markdown")
+        dates = [yesterday, today]
+        if subject:
+            try:
+                for d in get_last_lectures_for_subject(subject, 3):
+                    if d not in dates:
+                        dates.append(d)
+            except:
+                pass
+        dates = dates[:4]
+    m = telebot.types.ReplyKeyboardMarkup(row_width=3, resize_keyboard=True)
+    for d in dates:
+        m.add(d)
+    back = bt("زر_عوده", uid) if uid else "🔙 العودة"
+    m.add(back)
+    return m
+
+def send_date_suggestions(chat_id, subject=None, for_lecture=False, for_alert=False, uid=None):
+    """للتوافق الخلفي — لم تعد ترسل رسالة منفصلة."""
+    pass
 
 def get_settings():
     return bt("رسالة_الترحيب"), bt("رسالة_الرفض")
@@ -3176,6 +3266,7 @@ def save_file_to_cell(date, subject, col, fids, merge=False):
         new_row[1] = subject
         new_row[col] = f"|{','.join(fids)}"
         sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        invalidate_sheet_cache()
         return True
     except Exception as e:
         log_error(f"save_file_to_cell: {e}")
@@ -3269,6 +3360,7 @@ def set_bot_commands():
         telebot.types.BotCommand("help", "عرض التعليمات"),
         telebot.types.BotCommand("lang", "تغيير اللغة"),
         telebot.types.BotCommand("ai", "تشغيل المساعد الذكي"),
+        telebot.types.BotCommand("refresh", "تحديث البيانات (للمالك)"),
     ]
     bot.set_my_commands(commands)
 
@@ -3298,6 +3390,22 @@ def start_message(message):
     load_user_lang(uid)
 
     parts = text.split()
+
+    # ── /start refresh — يشتغل فقط للمالك أو من بوت اللوج ──
+    if len(parts) > 1 and parts[1] == "refresh":
+        # نتحقق مبدئياً بدون cache
+        invalidate_users_cache()
+        _, _, owners, _, _, _, _, _ = get_users()
+        if uid in owners:
+            n = _do_full_refresh()
+            bot.send_message(message.chat.id,
+                f"✅ تم تحديث البيانات!\n"
+                f"🤖 مزودي AI النشطين: {n}\n"
+                f"🔄 cache المستخدمين والبيانات أُبطل.")
+        else:
+            bot.send_message(message.chat.id, "⛔ هذا الأمر للمالك فقط.")
+        return
+
     if len(parts) > 1 and parts[1].startswith("show_user_"):
         target_uid = parts[1].split("_")[2]
         _, row = find_user_row_by_id(target_uid)
@@ -3351,15 +3459,17 @@ def handle_request_contact_confirm(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # زر الكيبورد الكبير
+    # زر الكيبورد الكبير (request_contact)
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=False, one_time_keyboard=True)
     keyboard.add(telebot.types.KeyboardButton(bt("زر_مشاركة_كيبورد", uid), request_contact=True))
 
-    # ٢ - استبدال الرسالة الأولى + زر العودة تحتها
+    # زر رجوع inline (يُرفق مع الرسالة الأصلية)
     back_markup = telebot.types.InlineKeyboardMarkup()
     back_markup.add(telebot.types.InlineKeyboardButton(
         bt("زر_عوده_مشاركه", uid), callback_data="request_contact_back"
     ))
+
+    # نعدّل الرسالة الأصلية لإضافة زر الرجوع
     try:
         bot.edit_message_caption(
             bt("رسالة_مشاركة", uid),
@@ -3376,8 +3486,8 @@ def handle_request_contact_confirm(call):
         except:
             pass
 
+    # رسالة واحدة فقط تحتوي 👇 + زر الكيبورد (ليس رسالتين)
     bot.send_message(call.message.chat.id, "👇", reply_markup=keyboard)
-
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
@@ -3455,6 +3565,22 @@ def ai_command(message):
         parse_mode="Markdown",
         reply_markup=main_menu(uid)
     )
+
+@bot.message_handler(commands=['refresh'])
+def refresh_command(message):
+    uid = message.from_user.id
+    invalidate_users_cache()
+    _, _, owners, _, _, _, _, _ = get_users()
+    if uid not in owners:
+        bot.send_message(message.chat.id, "⛔ هذا الأمر للمالك فقط.")
+        return
+    msg = bot.send_message(message.chat.id, "🔄 جاري التحديث...")
+    n = _do_full_refresh()
+    bot.edit_message_text(
+        f"✅ تم تحديث البيانات!\n"
+        f"🤖 مزودي AI النشطين: {n}\n"
+        f"🔄 cache المستخدمين والبيانات أُبطل.",
+        message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['ai_reset'])
 def ai_reset_command(message):
@@ -3774,17 +3900,20 @@ def handle_message(message):
         threading.Thread(target=_redo_extract, daemon=True).start()
         return
 
+    # ─── إذا كل مزودي AI معطّلون → أطفئ السويتش في الذاكرة فقط (لا تكتب الشيت) ───
+    if not AI_PROVIDERS and user_ai_enabled.get(uid, False):
+        user_ai_enabled[uid] = False
+
     # ─── معالجة الأزرار (أولوية قصوى، تتجاوز الـ AI دائماً) ───
     if text in BUTTON_TEXTS and not from_voice:
         pass  # يكمل للكود العادي أدناه
 
-    # ─── معالجة AI: الشروط الثلاثة يجب أن تكون مكتملة ───
+    # ─── معالجة AI: يشتغل فقط في المنيو الرئيسي (state فارغ أو subject فقط) ───
     elif (
-        AI_PROVIDERS                                    # شرط 1: يوجد مزود نشط
-        and is_ai_allowed(uid)                          # شرط 1: لدى المستخدم صلاحية
-        and user_ai_enabled.get(uid, False)             # شرط 2: السويتش ON
-        and not (bool(state) and not (                  # شرط 3: في الصفحة الرئيسية
-            len(state) == 1 and "subject" in state))
+        AI_PROVIDERS                                    # يوجد مزود نشط
+        and is_ai_allowed(uid)                          # لدى المستخدم صلاحية
+        and user_ai_enabled.get(uid, False)             # السويتش ON
+        and not state                                          # في الصفحة الرئيسية فقط (state فارغ تماماً)
         and text                                        # النص غير فارغ
     ):
         user_role = get_user_role(uid)
@@ -3944,6 +4073,7 @@ def handle_message(message):
                 uid_str_snap = str(uid)
                 if uid_str_snap in _users_snapshot:
                     _users_snapshot[uid_str_snap]["allowed"] = True
+                invalidate_users_cache()  # ← إبطال الـ cache فوراً
                 bot.send_message(message.chat.id, bt("رسالة_موافقة", uid), reply_markup=telebot.types.ReplyKeyboardRemove())
                 notify_owners_action(uid, message.from_user.full_name or "مجهول", "", "الكود السري", "approve")
                 log_info(f"كود سري صحيح", uid)
@@ -4033,6 +4163,142 @@ def handle_message(message):
                 )
             else:
                 bot.send_message(message.chat.id, "❌ حدث خطأ أثناء تغيير الإعداد.")
+            return
+
+        # ══════════════════════════════════════════
+        # ↩️ رجوع خطوة — يرجع خطوة واحدة في الـ flow الحالي
+        # ══════════════════════════════════════════
+        if text == "↩️ رجوع خطوة":
+            step = state.get("step", "")
+
+            # ── إضافة بيانات ──
+            if state.get("adding_data"):
+                if step == "choose_subject":
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=add_data_menu(uid))
+                elif step == "choose_building":
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_with_noexist_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                elif step == "choose_room":
+                    user_state[uid]["step"] = "choose_building"
+                    bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                elif step == "enter_date":
+                    dtype = state.get("data_type", "")
+                    if dtype == "lecture":
+                        user_state[uid]["step"] = "choose_building"
+                        bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                    else:
+                        user_state[uid]["step"] = "choose_subject"
+                        _kb, _ = subjects_with_noexist_kb(uid)
+                        bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                elif step == "enter_time":
+                    user_state[uid]["step"] = "enter_date"
+                    bot.send_message(message.chat.id, "📅 أدخل تاريخ المحاضرة:",
+                                     reply_markup=date_suggestions_menu(for_lecture=True, uid=uid))
+                elif step in ("enter_value", "enter_new_val"):
+                    user_state[uid]["step"] = "enter_date"
+                    dtype = state.get("data_type", "")
+                    for_lec = dtype == "lecture"
+                    for_alt = dtype == "alert"
+                    bot.send_message(message.chat.id, "📅 أدخل التاريخ:",
+                                     reply_markup=date_suggestions_menu(
+                                         subject=state.get("subject", ""),
+                                         for_lecture=for_lec, for_alert=for_alt, uid=uid))
+                else:
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=add_data_menu(uid))
+                return
+
+            # ── تعديل بيانات ──
+            if state.get("editing_data"):
+                if step == "choose_subject":
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=edit_data_menu(uid))
+                elif step == "choose_date_edit":
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_menu_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                elif step == "choose_action":
+                    user_state[uid]["step"] = "choose_date_edit"
+                    dates = state.get("dates_cache", [])
+                    bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu_kb(dates, uid) if dates else back_only_menu(uid))
+                elif step in ("enter_new_val", "confirm_delete"):
+                    user_state[uid]["step"] = "choose_action"
+                    bot.send_message(message.chat.id, "اختر الإجراء:", reply_markup=edit_action_menu(uid))
+                else:
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع البيانات:", reply_markup=edit_data_menu(uid))
+                return
+
+            # ── رفع ملف (أدمن) ──
+            if state.get("uploading"):
+                if step == "choose_type":
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_menu_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                elif step in ("choose_date", "waiting_files", "confirm_files"):
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع الملف:", reply_markup=file_type_menu(uid))
+                else:
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_menu_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                return
+
+            # ── طلب رفع (مستخدم) ──
+            if state.get("requesting_upload"):
+                if step == "choose_type":
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_menu_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                elif step in ("choose_date", "waiting_files_req", "confirm_req"):
+                    user_state[uid]["step"] = "choose_type"
+                    bot.send_message(message.chat.id, "اختر نوع الملف:", reply_markup=file_type_menu(uid))
+                else:
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb, _ = subjects_menu_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
+                return
+
+            # ── رفع تعليمات ──
+            if state.get("uploading_help"):
+                if step == "waiting_file_help":
+                    user_state[uid]["step"] = "enter_note"
+                    bot.send_message(message.chat.id, "📝 أدخل نصاً توضيحياً أو تخطي:", reply_markup=back_skip_menu(uid))
+                elif step == "enter_note":
+                    user_state[uid]["step"] = "choose_audience"
+                    bot.send_message(message.chat.id, "👥 هذه التعليمات لمن؟", reply_markup=help_audience_menu(uid))
+                else:
+                    user_state[uid]["step"] = "choose_audience"
+                    bot.send_message(message.chat.id, "👥 هذه التعليمات لمن؟", reply_markup=help_audience_menu(uid))
+                return
+
+            # ── إدارة المستخدمين ──
+            if state.get("managing_users"):
+                if step in ("search_id", "search_phone", "search_name"):
+                    user_state[uid]["step"] = "menu"
+                    bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
+                else:
+                    user_state.pop(uid, None)
+                    bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
+
+            # ── بث الإشعارات ──
+            if state.get("broadcasting"):
+                if step == "waiting_file_or_send":
+                    user_state[uid]["step"] = "waiting_text"
+                    m_bcast = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
+                    m_bcast.add("📤 إرسال بدون نص", back_btn)
+                    bot.send_message(message.chat.id, "اكتب نص الإشعار:", reply_markup=m_bcast)
+                else:
+                    user_state.pop(uid, None)
+                    bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
+
+            # ── fallback: رجوع للرئيسية ──
+            user_state.pop(uid, None)
+            bot.send_message(message.chat.id, welcome, reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
         if text == back_btn:
@@ -4300,8 +4566,7 @@ def handle_message(message):
                     return
                 user_state[uid]["step"] = "choose_date"
                 subj = state.get("subject", "")
-                bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=back_only_menu(uid))
-                send_date_suggestions(message.chat.id, subject=subj, uid=uid)
+                bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=date_suggestions_menu(subject=subj, uid=uid))
                 return
             if step == "choose_date":
                 d = parse_smart_date(text)
@@ -4512,14 +4777,12 @@ def handle_message(message):
                     return
                 user_state[uid]["step"] = "choose_date"
                 subj = state.get("subject", "")
-                bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=back_only_menu(uid))
-                send_date_suggestions(message.chat.id, subject=subj, uid=uid)
+                bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=date_suggestions_menu(subject=subj, uid=uid))
                 return
             if step == "choose_date":
                 d = parse_smart_date(text)
                 if not d:
-                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown")
-                    send_date_suggestions(message.chat.id, subject=state.get("subject", ""), uid=uid)
+                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown", reply_markup=date_suggestions_menu(subject=state.get("subject", ""), uid=uid))
                     return
                 user_state[uid]["date"] = d
                 user_state[uid]["step"] = "waiting_files"
@@ -4558,8 +4821,7 @@ def handle_message(message):
                 user_state[uid]["data_type"] = dtype
                 if dtype == "lecture":
                     user_state[uid]["step"] = "enter_date"
-                    bot.send_message(message.chat.id, "📅 أدخل تاريخ المحاضرة:", reply_markup=back_only_menu(uid))
-                    send_date_suggestions(message.chat.id, for_lecture=True, uid=uid)
+                    bot.send_message(message.chat.id, "📅 أدخل تاريخ المحاضرة:", reply_markup=date_suggestions_menu(for_lecture=True, uid=uid))
                 elif dtype in ("task", "summary", "alert", "price"):
                     user_state[uid]["step"] = "choose_subject"
                     _kb_no, _ = subjects_with_noexist_kb(uid)
@@ -4587,15 +4849,13 @@ def handle_message(message):
                     bot.send_message(message.chat.id, "💰 أدخل سعر الملزمة:", reply_markup=back_only_menu(uid))
                 else:
                     user_state[uid]["step"] = "enter_date"
-                    bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=back_only_menu(uid))
-                    send_date_suggestions(message.chat.id, subject=text, for_alert=(dtype == "alert"), uid=uid)
+                    bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=date_suggestions_menu(subject=text, for_alert=(state.get("data_type") == "alert"), uid=uid))
                 return
             if step == "enter_date":
                 d = parse_smart_date(text)
                 if not d:
-                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown")
-                    send_date_suggestions(message.chat.id, for_lecture=(state.get("data_type") == "lecture"),
-                                          for_alert=(state.get("data_type") == "alert"), uid=uid)
+                    bot.send_message(message.chat.id, "❌ صيغة غير صحيحة. مثال: `27/02/2026`", parse_mode="Markdown",
+                                     reply_markup=date_suggestions_menu(for_lecture=(state.get("data_type") == "lecture"), for_alert=(state.get("data_type") == "alert"), uid=uid))
                     return
                 user_state[uid]["date"] = d
                 dtype = state.get("data_type", "")
@@ -5524,6 +5784,60 @@ def handle_sched_cancel(call):
         pass
     bot.answer_callback_query(call.id, "❌ تم الإلغاء")
 
+def _do_full_refresh():
+    """
+    يعيد قراءة كل شيء من الشيت:
+    - bot_texts → BOT_TEXTS
+    - ai_providers → AI_PROVIDERS (مع تحديث السويتش لكل مستخدم)
+    - button_texts → BUTTON_TEXTS
+    - يُبطل cache البيانات والمستخدمين
+    ثم يتحقق من كل مستخدم سويتشه ON في الشيت → يُعيد تفعيله إذا صار AI مسموح
+    """
+    global AI_PROVIDERS
+    invalidate_users_cache()
+    invalidate_sheet_cache()
+    load_bot_texts()
+    load_button_texts()
+    old_count = len(AI_PROVIDERS)
+    load_ai_providers()
+    new_count = len(AI_PROVIDERS)
+
+    # إذا كل المزودين صاروا FALSE → امسح الذاكرة فقط (الشيت يبقى محفوظ للعودة)
+    if not AI_PROVIDERS:
+        user_ai_enabled.clear()
+
+    # إذا عاد مزود واحد على الأقل → امسح الذاكرة كلها
+    # حتى يُعاد تحميل حالة كل مستخدم من الشيت في رسالته القادمة
+    elif AI_PROVIDERS and old_count == 0:
+        user_ai_enabled.clear()  # سيُعاد تحميل كل مستخدم من الشيت عند أول رسالة
+
+    log_info(f"🔄 Refresh: providers {old_count}→{new_count}, users_cache invalidated")
+    return new_count
+
+def _sheet_cache_loop():
+    """يحدّث الـ cache كل دقيقة تلقائياً"""
+    while True:
+        time.sleep(60)
+        try:
+            invalidate_users_cache()
+            invalidate_sheet_cache()
+            # إعادة تحميل AI providers للتحقق من التغييرات
+            old_count = len(AI_PROVIDERS)
+            load_ai_providers()
+            new_count = len(AI_PROVIDERS)
+            if old_count != new_count:
+                load_button_texts()
+                # auto-disable إذا صفر
+                if not AI_PROVIDERS:
+                    # نمسح الذاكرة فقط — الشيت يبقى محفوظ للعودة
+                    user_ai_enabled.clear()
+                # auto-enable إذا عاد → امسح الذاكرة، يُعاد تحميل كل مستخدم من الشيت
+                elif old_count == 0:
+                    user_ai_enabled.clear()
+                log_info(f"🔄 auto-refresh: AI providers {old_count}→{new_count}")
+        except:
+            pass
+
 def run():
     load_bot_texts()
     load_button_texts()
@@ -5534,6 +5848,7 @@ def run():
     else:
         log_info(f"✅ تم تحميل {len(AI_PROVIDERS)} مزود AI.")
     threading.Thread(target=_watch_sheet_loop, daemon=True).start()
+    threading.Thread(target=_sheet_cache_loop, daemon=True).start()
     log_info("بوت الدراسة يعمل ✅")
     bot.infinity_polling()
 
