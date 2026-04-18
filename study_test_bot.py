@@ -1179,7 +1179,13 @@ def find_user_row_by_phone(phone):
         rows = users_sheet.get_all_values()
         for i, row in enumerate(rows, start=1):
             rp = re.sub(r'[\s\-\+]', '', row[1].strip() if len(row) > 1 else "")
-            if rp and rp == pc:
+            if not rp:
+                continue
+            # مطابقة كاملة
+            if rp == pc:
+                return i, row
+            # مطابقة جزئية: يتطابق إذا أحدهما ينتهي بالآخر (كود الدولة اختياري)
+            if rp.endswith(pc) or pc.endswith(rp):
                 return i, row
         return None, None
     except:
@@ -1877,32 +1883,53 @@ def manage_users_menu(uid):
 
 def _smart_search_user(query):
     """
-    بحث ذكي: يحدد نوع البحث تلقائياً:
-    - أرقام فقط (أو تبدأ بـ +) → رقم هاتف
-    - أرقام فقط وطويلة (≥7 خانة) ← هاتف | قصيرة ← ID
-    - نص → اسم
-    يرجع (row, search_type) أو (None, None)
+    يبحث في الثلاثة حقول في نفس الوقت: ID + رقم الهاتف + الاسم
+    ويجمع النتائج بدون تكرار.
     """
-    import re
-    q = query.strip().lstrip("+")
-    digits_only = re.sub(r"[\s\-]", "", q).isdigit()
+    q = query.strip()
+    clean = re.sub(r'[\s\-\+]', '', q)
+    found_uids = set()
+    results = []
 
-    if digits_only:
-        clean = re.sub(r"[\s\-+]", "", query.strip())
-        if len(clean) >= 7:
-            # رقم هاتف
-            _, row = find_user_row_by_phone(query)
-            return row, "phone"
-        else:
-            # ID
-            _, row = find_user_row_by_id(query)
-            return row, "id"
-    else:
-        # اسم
-        matches = search_users_by_name(query)
-        if matches:
-            return matches[0] if len(matches) == 1 else matches, "name"
-        return None, "name"
+    try:
+        rows = users_sheet.get_all_values()[1:]
+    except:
+        return None, "all"
+
+    for row in rows:
+        if not row or not any(c.strip() for c in row):
+            continue
+        uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
+        if not uid_str.isdigit():
+            continue
+        name  = row[0].strip()
+        phone = re.sub(r'[\s\-\+]', '', row[1].strip() if len(row) > 1 else "")
+
+        matched = False
+
+        # 1. تطابق ID
+        if clean and uid_str == clean:
+            matched = True
+
+        # 2. تطابق رقم الهاتف (جزئي — يقبل مع/بدون كود الدولة)
+        if clean and phone and (phone == clean or phone.endswith(clean) or clean.endswith(phone)):
+            matched = True
+
+        # 3. تطابق الاسم (جزء من الاسم)
+        if q and len(q) >= 2:
+            name_clean = name.replace("🆕️", "").replace("🆕", "").strip()
+            if q.lower() in name_clean.lower():
+                matched = True
+
+        if matched and uid_str not in found_uids:
+            found_uids.add(uid_str)
+            results.append(row)
+
+    if not results:
+        return None, "all"
+    if len(results) == 1:
+        return results[0], "all"
+    return results, "all"
 
 def display_mode_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -4758,38 +4785,15 @@ def handle_message(message):
                 if result is None:
                     bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
                 elif isinstance(result, list):
-                    # نتائج متعددة من بحث الاسم
+                    bot.send_message(message.chat.id, f"🔍 {len(result)} نتيجة:")
                     for row in result[:5]:
-                        r_name  = row[0].strip() or "مجهول"
-                        r_uid   = row[2].strip().lstrip("'")
-                        r_phone = row[1].strip() if len(row) > 1 else ""
-                        # الاسم والرقم: نص قابل للنسخ | ID: رابط للحساب
-                        uid_part   = f"[{r_uid}](tg://user?id={r_uid})"
-                        phone_part = f"\n📞 `{r_phone}`" if r_phone else ""
-                        bot.send_message(message.chat.id,
-                            f"👤 `{r_name}`\n🆔 {uid_part}{phone_part}",
-                            parse_mode="Markdown")
+                        send_user_card(message.chat.id, row)
                     if len(result) > 5:
-                        bot.send_message(message.chat.id, f"⚠️ تم عرض 5 من {len(result)} نتيجة. دقّق بحثك.")
+                        bot.send_message(message.chat.id, f"⚠️ تم عرض 5 من {len(result)}. دقّق بحثك.")
                 else:
-                    # نتيجة واحدة
-                    row = result
-                    r_name  = row[0].strip() or "مجهول"
-                    r_uid   = row[2].strip().lstrip("'")
-                    r_phone = row[1].strip() if len(row) > 1 else ""
-                    if stype == "id":
-                        # ID → بطاقة كاملة مع أزرار
-                        send_user_card(message.chat.id, row)
-                    else:
-                        # اسم أو رقم → نص قابل للنسخ + بطاقة
-                        uid_link   = f"[{r_uid}](tg://user?id={r_uid})"
-                        phone_part = f"\n📞 `{r_phone}`" if r_phone else ""
-                        bot.send_message(message.chat.id,
-                            f"👤 `{r_name}`\n🆔 {uid_link}{phone_part}",
-                            parse_mode="Markdown")
-                        send_user_card(message.chat.id, row)
+                    send_user_card(message.chat.id, result)
                 user_state[uid]["step"] = "menu"
-                bot.send_message(message.chat.id, "↩️", reply_markup=manage_users_menu(uid))
+                bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
                 return
             return
 
