@@ -4608,11 +4608,44 @@ def handle_message(message):
                 bot.send_message(message.chat.id, "📭 لا توجد محاضرات.", reply_markup=main_menu(uid, admin=admin, owner=owner))
                 return
             rows_s = [r for r in data if parse_date(safe_get(r, 0)) == ld and get_text(safe_get(r, 2))]
-            day = get_day_name(ld, uid)
-            d_ar = format_date_ar(ld)
-            resp = f"🕐 *{d_ar} — {day}:*\n{'─' * 25}\n"
-            for r in rows_s:
-                resp += f"📌 {safe_get(r, 1)}: {get_text(safe_get(r, 2))}\n"
+            day  = get_day_name(ld, uid)
+            # تحويل التاريخ: dd/mm/yyyy → yyyy/mm/dd
+            try:
+                dt_obj = datetime.strptime(ld, "%d/%m/%Y")
+                date_fmt = dt_obj.strftime("%Y/%m/%d")
+            except:
+                date_fmt = ld
+            ORDINALS_AR = ["الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة"]
+            sep = "ـ" * 34
+            resp = f"🎓 *جدول المحاضرات | {day} {date_fmt}*\n{sep}\n"
+            for idx, r in enumerate(rows_s):
+                subj   = safe_get(r, 1)
+                time_v = get_text(safe_get(r, 2))
+                room   = safe_get(r, 3)
+                doctor = get_subject_doctor(subj)
+                num    = ORDINALS_AR[idx] if idx < len(ORDINALS_AR) else str(idx+1)
+                # تحويل الوقت إلى ص/م
+                def fmt_time(t):
+                    try:
+                        parts = [p.strip() for p in t.split("-")]
+                        result = []
+                        for p in parts:
+                            h, m_ = (p.split(":") + ["00"])[:2]
+                            h = int(h); suffix = "ص" if h < 12 else "م"
+                            h12 = h if h <= 12 else h - 12
+                            result.append(f"{h12:02d}:{m_} {suffix}")
+                        return " - ".join(result)
+                    except:
+                        return t
+                time_ar = fmt_time(time_v)
+                resp += f"\n🔹 *المحاضرة {num}:*\n"
+                resp += f"📖 المقرر: {subj}\n"
+                if doctor:
+                    resp += f"👨‍🏫 الدكتور: {doctor}\n"
+                resp += f"🕒 الوقت: {time_ar}\n"
+                if room:
+                    resp += f"🏛️ المكان: {room}\n"
+            resp += f"\n{sep}"
             bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
             return
 
