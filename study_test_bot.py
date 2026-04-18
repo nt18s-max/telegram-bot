@@ -94,6 +94,12 @@ DEFAULT_BOT_TEXTS = {
     "زر_الاسعار_en": "💰 Book Prices",
     "زر_الملازم_ar": "📋 الملازم",
     "زر_الملازم_en": "📋 Notes",
+    "خيار_الملزمه_ar": "📋 الملزمة",
+    "خيار_الملزمه_en": "📋 Notes",
+    "زر_اضافة_ملزمه_ar": "📋 إضافة ملزمة",
+    "زر_اضافة_ملزمه_en": "📋 Add Notes",
+    "زر_تعديل_ملزمه_ar": "📋 تعديل/حذف ملزمة",
+    "زر_تعديل_ملزمه_en": "📋 Edit/Delete Notes",
     "زر_الملخصات_ar": "📖 الملخصات",
     "زر_الملخصات_en": "📖 Summaries",
     "زر_طلب_رفع_ar": "📨 طلب رفع ملف",
@@ -1728,8 +1734,8 @@ def load_button_texts():
         "زر_اشعار", "زر_اضافة", "زر_تعديل", "زر_المستخدمين", "زر_عوده",
         "زر_يوم", "زر_فتره", "زر_تحديد_الكل", "زر_تم_التحديد", "زر_حسب_الماده",
         "زر_حسب_التاريخ", "زر_اضافة_محاضره", "زر_اضافة_تكليف", "زر_اضافة_ملخص",
-        "زر_اضافة_سعر", "زر_اضافة_تنبيه", "زر_تعديل_محاضره", "زر_تعديل_تكليف",
-        "زر_تعديل_ملخص", "زر_تعديل_سعر", "زر_تعديل_تنبيه", "زر_تعديل_زرار", "زر_حذف_زرار"
+        "زر_اضافة_سعر", "زر_اضافة_تنبيه", "زر_اضافة_ملزمه", "زر_تعديل_محاضره", "زر_تعديل_تكليف",
+        "زر_تعديل_ملخص", "زر_تعديل_سعر", "زر_تعديل_تنبيه", "زر_تعديل_ملزمه", "زر_تعديل_زرار", "زر_حذف_زرار"
     ]
     for key in button_keys:
         BUTTON_TEXTS.add(bt(key))
@@ -1813,7 +1819,7 @@ def subjects_with_noexist_kb(uid):
 
 def subject_options_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات"]:
+    for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات", "خيار_الملزمه"]:
         m.add(bt(k, uid))
     m.add(bt("زر_عوده", uid))
     return m
@@ -1835,7 +1841,7 @@ def add_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.row(bt("زر_اضافة_محاضره", uid), bt("زر_اضافة_تكليف", uid))
     m.row(bt("زر_اضافة_ملخص", uid), bt("زر_اضافة_سعر", uid))
-    m.add(bt("زر_اضافة_تنبيه", uid))
+    m.row(bt("زر_اضافة_تنبيه", uid), bt("زر_اضافة_ملزمه", uid))
     m.add(bt("زر_عوده", uid))
     return m
 
@@ -1843,7 +1849,7 @@ def edit_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.row(bt("زر_تعديل_محاضره", uid), bt("زر_تعديل_تكليف", uid))
     m.row(bt("زر_تعديل_ملخص", uid), bt("زر_تعديل_سعر", uid))
-    m.add(bt("زر_تعديل_تنبيه", uid))
+    m.row(bt("زر_تعديل_تنبيه", uid), bt("زر_تعديل_ملزمه", uid))
     m.add(bt("زر_عوده", uid))
     return m
 
@@ -4530,16 +4536,21 @@ def handle_message(message):
             bot.send_message(message.chat.id, f"📌 *{text}*\nماذا تحتاج؟", parse_mode="Markdown", reply_markup=subject_options_menu(uid))
             return
 
-        SUBJ_OPTS = [bt(k, uid) for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات"]]
+        SUBJ_OPTS = [bt(k, uid) for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات", "خيار_الملزمه"]]
         if _free and state.get("subject") and text in SUBJ_OPTS:
             subj = state["subject"]
             rows_s = [r for r in data if safe_get(r, 1) == subj]
+            if text == bt("خيار_الملزمه", uid):
+                note = next((get_text(safe_get(r, 8)) for r in rows_s if safe_get(r, 8)), None)
+                msg2 = (f"📋 *{subj}*:\n{note}" if note else f"لا توجد ملزمة لـ *{subj}*")
+                bot.send_message(message.chat.id, msg2, parse_mode="Markdown", reply_markup=subject_options_menu(uid))
+                return
             if text == bt("خيار_السعر", uid):
                 price = next((get_text(safe_get(r, 5)) for r in rows_s if safe_get(r, 5)), None)
                 msg2 = (f"💰 *{subj}*: {price}" if price else f"لا يوجد سعر لـ *{subj}*")
                 bot.send_message(message.chat.id, msg2, parse_mode="Markdown", reply_markup=subject_options_menu(uid))
                 return
-            col_map3 = {bt("خيار_الجدول", uid): 2, bt("خيار_التكاليف", uid): 4, bt("خيار_الملخص", uid): 6, bt("خيار_التنبيهات", uid): 7}
+            col_map3 = {bt("خيار_الجدول", uid): 2, bt("خيار_التكاليف", uid): 4, bt("خيار_الملخص", uid): 6, bt("خيار_التنبيهات", uid): 7, bt("خيار_الملزمه", uid): 8}
             col = col_map3.get(text, 2)
             dates = list(dict.fromkeys(
                 parse_date(safe_get(r, 0)) for r in rows_s
@@ -4958,13 +4969,18 @@ def handle_message(message):
             step = state.get("step", "")
             ADD_MAP = {bt("زر_اضافة_محاضره", uid): "lecture", bt("زر_اضافة_تكليف", uid): "task",
                        bt("زر_اضافة_ملخص", uid): "summary", bt("زر_اضافة_سعر", uid): "price",
-                       bt("زر_اضافة_تنبيه", uid): "alert"}
+                       bt("زر_اضافة_تنبيه", uid): "alert", bt("زر_اضافة_ملزمه", uid): "notes"}
             if step == "choose_type" and text in ADD_MAP:
                 dtype = ADD_MAP[text]
                 user_state[uid]["data_type"] = dtype
                 if dtype == "lecture":
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, "📅 أدخل تاريخ المحاضرة:", reply_markup=date_suggestions_menu(for_lecture=True, uid=uid))
+                elif dtype == "notes":
+                    # الملزمة بلا تاريخ → اختر مادة مباشرة
+                    user_state[uid]["step"] = "choose_subject"
+                    _kb_no, _ = subjects_with_noexist_kb(uid)
+                    bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb_no)
                 elif dtype in ("task", "summary", "alert", "price"):
                     user_state[uid]["step"] = "choose_subject"
                     _kb_no, _ = subjects_with_noexist_kb(uid)
@@ -4990,6 +5006,9 @@ def handle_message(message):
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
                     bot.send_message(message.chat.id, "💰 أدخل سعر الملزمة:", reply_markup=back_only_menu(uid))
+                elif dtype == "notes":
+                    user_state[uid]["step"] = "enter_value"
+                    bot.send_message(message.chat.id, "📋 أدخل رابط الملزمة أو نصها:", reply_markup=back_only_menu(uid))
                 else:
                     user_state[uid]["step"] = "enter_date"
                     bot.send_message(message.chat.id, "📅 أدخل التاريخ:", reply_markup=date_suggestions_menu(subject=text, for_alert=(state.get("data_type") == "alert"), uid=uid))
@@ -5105,6 +5124,20 @@ def handle_message(message):
                             break
                     if not updated:
                         sheet.append_row(["", subj, "", "", "", val, "", ""], value_input_option="USER_ENTERED")
+                    invalidate_sheet_cache()
+                    bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    user_state.pop(uid, None)
+                elif dtype == "notes":
+                    rows_s = sheet.get_all_values()
+                    updated = False
+                    for i, row in enumerate(rows_s[1:], start=2):
+                        if safe_get(row, 1) == subj:
+                            sheet.update_cell(i, 9, val)
+                            updated = True
+                            break
+                    if not updated:
+                        sheet.append_row(["", subj, "", "", "", "", "", "", val], value_input_option="USER_ENTERED")
+                    invalidate_sheet_cache()
                     bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     user_state.pop(uid, None)
                 else:
@@ -5158,8 +5191,8 @@ def handle_message(message):
             step = state.get("step", "")
             EDIT_MAP = {bt("زر_تعديل_محاضره", uid): "lecture", bt("زر_تعديل_تكليف", uid): "task",
                         bt("زر_تعديل_ملخص", uid): "summary", bt("زر_تعديل_سعر", uid): "price",
-                        bt("زر_تعديل_تنبيه", uid): "alert"}
-            COL_MAP = {"lecture": 2, "task": 4, "summary": 6, "price": 5, "alert": 7}
+                        bt("زر_تعديل_تنبيه", uid): "alert", bt("زر_تعديل_ملزمه", uid): "notes"}
+            COL_MAP = {"lecture": 2, "task": 4, "summary": 6, "price": 5, "alert": 7, "notes": 8}
             if step == "choose_type" and text in EDIT_MAP:
                 user_state[uid]["data_type"] = EDIT_MAP[text]
                 user_state[uid]["step"] = "choose_subject"
@@ -5169,13 +5202,15 @@ def handle_message(message):
                 user_state[uid]["subject"] = text
                 dtype = state.get("data_type", "")
                 col = COL_MAP.get(dtype, 2)
-                if dtype == "price":
+                if dtype in ("price", "notes"):
+                    col_idx = 5 if dtype == "price" else 8
                     matched = [r for r in data if safe_get(r, 1) == text]
-                    current = next((get_text(safe_get(r, 5)) for r in matched if safe_get(r, 5)), "")
+                    current = next((get_text(safe_get(r, col_idx)) for r in matched if safe_get(r, col_idx)), "")
                     user_state[uid]["step"] = "choose_action"
                     user_state[uid]["current_val"] = current
                     user_state[uid]["date"] = ""
-                    bot.send_message(message.chat.id, f"القيمة الحالية: *{current or 'فارغ'}*", parse_mode="Markdown", reply_markup=edit_action_menu(uid))
+                    label = "سعر الملزمة" if dtype == "price" else "رابط/نص الملزمة"
+                    bot.send_message(message.chat.id, f"*{label}* الحالي: *{current or 'فارغ'}*", parse_mode="Markdown", reply_markup=edit_action_menu(uid))
                 else:
                     matched = [r for r in data if safe_get(r, 1) == text]
                     dates = list(dict.fromkeys(parse_date(safe_get(r, 0)) for r in matched if (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col))) and safe_get(r, 0)))
@@ -5221,8 +5256,15 @@ def handle_message(message):
                         rows_s = sheet.get_all_values()
                         for i, row in enumerate(rows_s[1:], start=2):
                             if safe_get(row, 1) == subj:
-                                sheet.update_cell(i, 6, "")
-                                break
+                                sheet.update_cell(i, 6, ""); break
+                        invalidate_sheet_cache()
+                        bot.send_message(message.chat.id, bt("رسالة_تم_الحذف", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                    elif dtype == "notes":
+                        rows_s = sheet.get_all_values()
+                        for i, row in enumerate(rows_s[1:], start=2):
+                            if safe_get(row, 1) == subj:
+                                sheet.update_cell(i, 9, ""); break
+                        invalidate_sheet_cache()
                         bot.send_message(message.chat.id, bt("رسالة_تم_الحذف", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
                         ok = delete_cell(date, subj, col)
@@ -5243,6 +5285,15 @@ def handle_message(message):
                         if safe_get(row, 1) == subj:
                             sheet.update_cell(i, 6, text)
                             break
+                    invalidate_sheet_cache()
+                    bot.send_message(message.chat.id, bt("رسالة_تم_التعديل", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                elif dtype == "notes":
+                    rows_s = sheet.get_all_values()
+                    for i, row in enumerate(rows_s[1:], start=2):
+                        if safe_get(row, 1) == subj:
+                            sheet.update_cell(i, 9, text)
+                            break
+                    invalidate_sheet_cache()
                     bot.send_message(message.chat.id, bt("رسالة_تم_التعديل", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                 else:
                     ok = save_text_to_cell(date, subj, col, text)
