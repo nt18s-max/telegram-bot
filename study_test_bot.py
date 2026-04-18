@@ -1892,8 +1892,9 @@ def _smart_search_user(query):
     يبحث في الثلاثة حقول في نفس الوقت: ID + رقم الهاتف + الاسم
     ويجمع النتائج بدون تكرار.
     """
-    q = query.strip()
-    clean = re.sub(r'[\s\-\+]', '', q)
+    # دعم #اسم_المستخدم → اسم المستخدم
+    q = query.strip().lstrip('#').replace('_', ' ').strip()
+    clean = re.sub(r'[\s\-\+]', '', query.strip().lstrip('#'))
     found_uids = set()
     results = []
 
@@ -2097,6 +2098,8 @@ def get_settings():
 # دوال الأوامر الإدارية النصية (محسنة للغة الطبيعية)
 # ─────────────────────────────────────────────────────
 def normalize_name(text):
+    # أزل # واستبدل _ بمسافة (لدعم #عبدالله_حسن_منصور)
+    text = text.lstrip('#').replace('_', ' ').strip()
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
     text = re.sub(r'[أآإ]', 'ا', text)
     text = re.sub(r'[ؤ]', 'و', text)
@@ -3046,23 +3049,34 @@ def send_user_card(chat_id, row, edit_existing=False):
     uid_link = f"[{uid_str}](tg://user?id={uid_str})"
     text = f"{role_icon} *{name}*\n🆔 {uid_link}{ph_line}\n{ai_icon} AI: {ai_status}\n{'─' * 23}"
 
-    # ── أزرار الرتب: الزر الحالي يصبح "⛔ إلغاء صلاحيته" ──
-    markup = telebot.types.InlineKeyboardMarkup(row_width=3)
+    # ── أزرار البطاقة: زرين فقط بمنطق ذكي ──
+    # ⭐ أدمن:
+    #   - مستخدم عادي → يرتقي لأدمن
+    #   - أدمن → يُقفل (يلغي كل صلاحياته)
+    # 👤 مستخدم:
+    #   - أدمن → ينزل لمستخدم عادي
+    #   - مستخدم عادي → تُلغى صلاحيته نهائياً
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
 
-    # الصف الأول: الرتب الثلاث — الرتبة الحالية تتحول لزر إلغاء
-    btn_owner = telebot.types.InlineKeyboardButton(
-        "⛔ إلغاء المالك" if own == "TRUE" else "👑 مالك",
-        callback_data=f"role_revoke_{uid_str}" if own == "TRUE" else f"role_owner_{uid_str}"
+    # نص الزر يعكس ما سيحدث
+    if adm == "TRUE" and own != "TRUE":
+        admin_btn_text = "⭐ أدمن ← 🔒 إقفال"   # أدمن → ضغط أدمن = إقفال
+        user_btn_text  = "👤 تخفيض لمستخدم"
+    elif allow_val == "TRUE" and adm != "TRUE" and own != "TRUE":
+        admin_btn_text = "⭐ ترقية لأدمن"
+        user_btn_text  = "👤 مستخدم ← ⛔ إلغاء"  # مستخدم → ضغط مستخدم = إلغاء
+    elif own == "TRUE":
+        admin_btn_text = "⭐ تخفيض لأدمن"
+        user_btn_text  = "👤 تخفيض لمستخدم"
+    else:
+        # غير مصرح
+        admin_btn_text = "⭐ ترقية لأدمن"
+        user_btn_text  = "👤 منح صلاحية"
+
+    markup.row(
+        telebot.types.InlineKeyboardButton(admin_btn_text, callback_data=f"role_admin_{uid_str}"),
+        telebot.types.InlineKeyboardButton(user_btn_text,  callback_data=f"role_user_{uid_str}"),
     )
-    btn_admin = telebot.types.InlineKeyboardButton(
-        "⛔ إلغاء الأدمن" if (adm == "TRUE" and own != "TRUE") else "⭐ أدمن",
-        callback_data=f"role_revoke_{uid_str}" if (adm == "TRUE" and own != "TRUE") else f"role_admin_{uid_str}"
-    )
-    btn_user = telebot.types.InlineKeyboardButton(
-        "⛔ إلغاء الصلاحية" if (allow_val == "TRUE" and adm != "TRUE" and own != "TRUE") else "👤 مستخدم",
-        callback_data=f"role_revoke_{uid_str}" if (allow_val == "TRUE" and adm != "TRUE" and own != "TRUE") else f"role_user_{uid_str}"
-    )
-    markup.row(btn_owner, btn_admin, btn_user)
 
     # الصف الثاني: تفعيل/تعطيل AI + تغيير الاسم
     ai_button_text = "🚫 تعطيل AI" if ai_val == "TRUE" else "🤖 تفعيل AI"
@@ -3886,7 +3900,11 @@ def handle_file(message):
             bot.send_message(message.chat.id, bt("رسالة_ادمن_فقط", uid))
             return
         user_state[uid]["step"] = "waiting_files"
-        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+        cap = (message.caption or "").strip()
+        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype, "caption": cap})
+        # إذا أُرسل كابشن مع الملف → احفظه كنص للخلية
+        if cap and not user_state[uid].get("file_caption"):
+            user_state[uid]["file_caption"] = cap
 
         def _finish_upload():
             st = user_state.get(uid, {})
@@ -3901,7 +3919,10 @@ def handle_file(message):
 
     if state.get("requesting_upload") and state.get("step") in ("waiting_files_req", "confirm_req"):
         user_state[uid]["step"] = "waiting_files_req"
-        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+        cap = (message.caption or "").strip()
+        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype, "caption": cap})
+        if cap and not user_state[uid].get("file_caption"):
+            user_state[uid]["file_caption"] = cap
 
         def _finish_req():
             st = user_state.get(uid, {})
@@ -4944,15 +4965,33 @@ def handle_message(message):
                 return
             if step == "confirm_files":
                 if text == "✅ إرسال":
-                    files = state.get("pending_files", [])
-                    col = state.get("col", 4)
-                    subj = state.get("subject", "")
-                    date = state.get("date", "")
-                    fids = [f["file_id"] for f in files]
-                    if save_file_to_cell(date, subj, col, fids, merge=False):
+                    files  = state.get("pending_files", [])
+                    col    = state.get("col", 4)
+                    subj   = state.get("subject", "")
+                    date   = state.get("date", "")
+                    fids   = [f["file_id"] for f in files]
+                    cap    = state.get("file_caption", "").strip()
+                    # إذا يوجد كابشن → احفظ النص مع الملفات في نفس الخلية
+                    if cap:
+                        # نص|file_id1,file_id2
+                        cell_val = cap + "|" + ",".join(fids)
+                        rows_s = sheet.get_all_values()
+                        saved = False
+                        for i, row in enumerate(rows_s[1:], start=2):
+                            if safe_get(row, 0) and parse_date(safe_get(row, 0)) == date and safe_get(row, 1) == subj:
+                                sheet.update_cell(i, col + 1, cell_val)
+                                saved = True; break
+                        if not saved:
+                            new_row = [""] * 8
+                            new_row[0] = date; new_row[1] = subj; new_row[col] = cell_val
+                            sheet.append_row(new_row, value_input_option="USER_ENTERED")
+                        invalidate_sheet_cache()
                         bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
                     else:
-                        bot.send_message(message.chat.id, bt("رسالة_خطأ", uid))
+                        if save_file_to_cell(date, subj, col, fids, merge=False):
+                            bot.send_message(message.chat.id, bt("رسالة_تم_الحفظ", uid), reply_markup=main_menu(uid, admin=admin, owner=owner))
+                        else:
+                            bot.send_message(message.chat.id, bt("رسالة_خطأ", uid))
                     user_state.pop(uid, None)
                 return
             return
@@ -5317,53 +5356,93 @@ def handle_role(call):
     if not is_owner_id(caller_id):
         bot.answer_callback_query(call.id, "⛔ غير مسموح")
         return
-    parts = call.data.split("_", 2)
-    new_role = parts[1]
+    parts      = call.data.split("_", 2)
+    btn        = parts[1]   # "admin" أو "user" أو "owner"
     target_uid = parts[2]
+    decided_by = f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name
+
     try:
         rows = users_sheet.get_all_values()
-        es = 0
         for i, row in enumerate(rows[1:], start=2):
-            if not row or not any(c.strip() for c in row):
-                es += 1
-                if es >= 5:
-                    break
+            if not row or row[2].strip().lstrip("'") != target_uid:
                 continue
-            es = 0
-            cell_id = row[2].strip().lstrip("'") if len(row) > 2 else ""
-            if cell_id != target_uid:
-                continue
-            cur_adm = row[4].strip().upper() if len(row) > 4 else "FALSE"
-            t_name = row[0].strip()
-            t_phone = row[1].strip() if len(row) > 1 else ""
-            decided_by = f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name
-            if new_role == "owner":
+            cur_allow = row[3].strip().upper() if len(row) > 3 else "FALSE"
+            cur_adm   = row[4].strip().upper() if len(row) > 4 else "FALSE"
+            cur_own   = row[5].strip().upper() if len(row) > 5 else "FALSE"
+            t_name    = row[0].strip()
+            t_phone   = row[1].strip() if len(row) > 1 else ""
+
+            # ── منطق زر ⭐ أدمن ──
+            if btn == "admin":
+                if cur_adm == "TRUE" and cur_own != "TRUE":
+                    # أدمن + ضغط أدمن → إقفال كامل
+                    users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
+                    label = "🔒 تم إقفال صلاحياته"
+                    try: bot.send_message(int(target_uid), "🔒 تم إقفال صلاحيتك من البوت.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
+                elif cur_own == "TRUE":
+                    # مالك + ضغط أدمن → ينزل لأدمن
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
+                    label = "⬇️ تخفيض لأدمن"
+                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى أدمن.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner")
+                else:
+                    # مستخدم / بدون صلاحية + ضغط أدمن → ترقية لأدمن
+                    users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
+                    label = "⭐ تم تعيين أدمن"
+                    try: bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_admin")
+
+            # ── منطق زر 👤 مستخدم ──
+            elif btn == "user":
+                if cur_allow == "TRUE" and cur_adm != "TRUE" and cur_own != "TRUE":
+                    # مستخدم عادي + ضغط مستخدم → إلغاء صلاحية نهائياً
+                    users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
+                    label = "⛔ تم إلغاء الصلاحية"
+                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
+                elif cur_adm == "TRUE" and cur_own != "TRUE":
+                    # أدمن + ضغط مستخدم → ينزل لمستخدم
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "⬇️ تخفيض لمستخدم"
+                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
+                elif cur_own == "TRUE":
+                    # مالك + ضغط مستخدم → ينزل لمستخدم
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "⬇️ تخفيض لمستخدم"
+                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من مالك إلى مستخدم عادي.")
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_owner_to_user")
+                else:
+                    # بدون صلاحية + ضغط مستخدم → منح صلاحية
+                    users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
+                    label = "👤 تم منح الصلاحية"
+                    try: bot.send_message(int(target_uid), bt("رسالة_موافقة", int(target_uid)))
+                    except: pass
+                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_user")
+
+            # ── زر 👑 مالك (للحالات الخاصة) ──
+            elif btn == "owner":
                 users_sheet.update(f"D{i}:F{i}", [[True, True, True]])
                 label = "👑 تم تعيين مالك"
                 try: bot.send_message(int(target_uid), "👑 تهانينا! تمت ترقيتك إلى مالك.")
                 except: pass
                 notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_owner")
-            elif new_role == "admin":
-                users_sheet.update(f"D{i}:F{i}", [[True, True, False]])
-                label = "⭐ تم تعيين أدمن"
-                try: bot.send_message(int(target_uid), "⭐ تهانينا! تمت ترقيتك إلى أدمن.")
-                except: pass
-                notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_admin")
             else:
-                users_sheet.update(f"D{i}:F{i}", [[True, False, False]])
-                label = "👤 تم تعيين مستخدم"
-                if cur_adm == "TRUE":
-                    try: bot.send_message(int(target_uid), "⬇️ تم تخفيض رتبتك من أدمن إلى مستخدم عادي.")
-                    except: pass
-                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "downgrade_admin")
-                else:
-                    try: bot.send_message(int(target_uid), bt("رسالة_موافقة", int(target_uid)))
-                    except: pass
-                    notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "set_user")
+                bot.answer_callback_query(call.id, "❌ غير معروف")
+                return
+
             invalidate_users_cache()
             update_user_card_in_chat(int(target_uid), call.message.chat.id)
             bot.answer_callback_query(call.id, label)
             return
+
         bot.answer_callback_query(call.id, "❌ المستخدم غير موجود")
     except Exception as e:
         log_error(f"handle_role: {e}")
