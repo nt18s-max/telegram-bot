@@ -2063,15 +2063,21 @@ def get_last_lectures_for_subject(subject, n=3):
         return []
 
 def date_suggestions_menu(subject=None, for_lecture=False, for_alert=False, uid=None):
-    """يرجع ReplyKeyboardMarkup بأزرار التواريخ المقترحة: أمس + اليوم + غد"""
+    """
+    يرجع ReplyKeyboardMarkup بأزرار التواريخ المقترحة.
+    الترتيب: الأحدث في الأعلى (غد → اليوم → أمس → قديم من الشيت)
+    """
     now = datetime.now(YEMEN_TZ)
     yesterday = (now - timedelta(days=1)).strftime("%d/%m/%Y")
     today     = now.strftime("%d/%m/%Y")
     tmrw      = (now + timedelta(days=1)).strftime("%d/%m/%Y")
+
     if for_lecture or for_alert:
-        dates = [yesterday, today, tmrw]
+        # غد، اليوم، أمس
+        dates = [tmrw, today, yesterday]
     else:
-        dates = [yesterday, today]
+        # اليوم، أمس، ثم تواريخ قديمة من الشيت (الأحدث أولاً)
+        dates = [today, yesterday]
         if subject:
             try:
                 for d in get_last_lectures_for_subject(subject, 3):
@@ -2080,6 +2086,7 @@ def date_suggestions_menu(subject=None, for_lecture=False, for_alert=False, uid=
             except:
                 pass
         dates = dates[:4]
+
     m = telebot.types.ReplyKeyboardMarkup(row_width=3, resize_keyboard=True)
     for d in dates:
         m.add(d)
@@ -3499,7 +3506,7 @@ def set_bot_commands():
         telebot.types.BotCommand("help", "عرض التعليمات"),
         telebot.types.BotCommand("lang", "تغيير اللغة"),
         telebot.types.BotCommand("ai", "تشغيل المساعد الذكي"),
-        telebot.types.BotCommand("refresh", "تحديث البيانات (للمالك)"),
+        telebot.types.BotCommand("refresh", "تحديث بيانات البوت"),
     ]
     bot.set_my_commands(commands)
 
@@ -3532,17 +3539,16 @@ def start_message(message):
 
     # ── /start refresh — يشتغل فقط للمالك أو من بوت اللوج ──
     if len(parts) > 1 and parts[1] == "refresh":
-        # نتحقق مبدئياً بدون cache
         invalidate_users_cache()
-        _, _, owners, _, _, _, _, _ = get_users()
-        if uid in owners:
+        invalidate_sheet_cache()
+        allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
+        _owner = uid in owners
+        if _owner:
             n = _do_full_refresh()
             bot.send_message(message.chat.id,
-                f"✅ تم تحديث البيانات!\n"
-                f"🤖 مزودي AI النشطين: {n}\n"
-                f"🔄 cache المستخدمين والبيانات أُبطل.")
+                f"✅ تم تحديث البيانات!\n🤖 مزودي AI النشطين: {n}")
         else:
-            bot.send_message(message.chat.id, "⛔ هذا الأمر للمالك فقط.")
+            bot.send_message(message.chat.id, "✅ تم تجديد البيانات")
         return
 
     if len(parts) > 1 and parts[1].startswith("show_user_"):
@@ -3568,8 +3574,8 @@ def start_message(message):
         # ١ - الترتيب: لا أريد أولاً (أحمر)، مشاركة ثانياً (أخضر)
         inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
         inline_markup.row(
-            telebot.types.InlineKeyboardButton(bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
-            telebot.types.InlineKeyboardButton(bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
+            telebot.types.InlineKeyboardButton("🔴 " + bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
+            telebot.types.InlineKeyboardButton("🟢 " + bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
         )
 
         caption = bt("رسالة_غير_مسموح", uid)
@@ -3671,8 +3677,8 @@ def handle_request_contact_back(call):
 
     inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     inline_markup.row(
-        telebot.types.InlineKeyboardButton(bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
-        telebot.types.InlineKeyboardButton(bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
+        telebot.types.InlineKeyboardButton("🔴 " + bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
+        telebot.types.InlineKeyboardButton("🟢 " + bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
     )
     caption = bt("رسالة_غير_مسموح", uid)
     try:
@@ -3712,17 +3718,20 @@ def ai_command(message):
 def refresh_command(message):
     uid = message.from_user.id
     invalidate_users_cache()
-    _, _, owners, _, _, _, _, _ = get_users()
-    if uid not in owners:
-        bot.send_message(message.chat.id, "⛔ هذا الأمر للمالك فقط.")
-        return
-    msg = bot.send_message(message.chat.id, "🔄 جاري التحديث...")
-    n = _do_full_refresh()
-    bot.edit_message_text(
-        f"✅ تم تحديث البيانات!\n"
-        f"🤖 مزودي AI النشطين: {n}\n"
-        f"🔄 cache المستخدمين والبيانات أُبطل.",
-        message.chat.id, msg.message_id)
+    invalidate_sheet_cache()
+    allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
+    _admin = admin_all or uid in admins
+    _owner = uid in owners
+    msg = bot.send_message(message.chat.id, "🔄 جاري التجديد...")
+    if _owner:
+        n = _do_full_refresh()
+        bot.edit_message_text(
+            f"✅ تم تحديث البيانات!\n"
+            f"🤖 مزودي AI النشطين: {n}\n"
+            f"🔄 cache المستخدمين والبيانات أُبطل.",
+            message.chat.id, msg.message_id)
+    else:
+        bot.edit_message_text("✅ تم تجديد البيانات", message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['ai_reset'])
 def ai_reset_command(message):
@@ -5252,13 +5261,24 @@ def handle_message(message):
                     bot.send_message(message.chat.id, f"*{label}* الحالي: *{current or 'فارغ'}*", parse_mode="Markdown", reply_markup=edit_action_menu(uid))
                 else:
                     matched = [r for r in data if safe_get(r, 1) == text]
-                    dates = list(dict.fromkeys(parse_date(safe_get(r, 0)) for r in matched if (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col))) and safe_get(r, 0)))
+                    # فقط التواريخ اللي فيها بيانات للعمود المحدد (نوع البيانات المختار)
+                    dates = list(dict.fromkeys(
+                        parse_date(safe_get(r, 0)) for r in matched
+                        if (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col)))
+                        and safe_get(r, 0)
+                    ))
+                    # ترتيب: الأحدث في الأعلى
+                    try:
+                        dates.sort(key=lambda x: datetime.strptime(x, "%d/%m/%Y"), reverse=True)
+                    except:
+                        pass
                     if not dates:
                         bot.send_message(message.chat.id, bt("رسالة_لا_بيانات", uid), reply_markup=edit_data_menu(uid))
                         user_state[uid] = {"editing_data": True, "step": "choose_type"}
                     else:
                         user_state[uid]["step"] = "choose_date_edit"
                         user_state[uid]["col"] = col
+                        user_state[uid]["dates_cache"] = dates
                         bot.send_message(message.chat.id, "📅 اختر التاريخ:", reply_markup=dates_menu_kb(dates, uid))
                 return
             if step == "choose_date_edit":
