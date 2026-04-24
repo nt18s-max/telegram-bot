@@ -72,6 +72,11 @@ TEXTS_BILINGUAL: dict[str, dict] = {}
 # ── TEXTS أحادي اللغة (للتوافق مع باقي الكود) ───────────
 TEXTS: dict[str, str] = {}
 
+# ── ألوان الأزرار من عمود D في الشيت ──────────────────
+# القيم المقبولة: danger (أحمر)، success (أخضر)، primary (أزرق)، فارغ (شفاف/افتراضي)
+BUTTON_STYLES: dict[str, str] = {}
+_VALID_STYLES = {"danger", "success", "primary"}
+
 # ── لغة كل مستخدم ─────────────────────────────────────
 user_lang: dict[int, str] = {}
 
@@ -106,10 +111,11 @@ def load_texts() -> None:
       العمود A = المفتاح
       العمود B = النص العربي
       العمود C = النص الإنجليزي (اختياري)
+      العمود D = لون الزر (danger/success/primary/فارغ)
 
-    يملأ TEXTS_BILINGUAL و TEXTS (للتوافق الخلفي).
+    يملأ TEXTS_BILINGUAL و TEXTS و BUTTON_STYLES.
     """
-    global TEXTS_BILINGUAL, TEXTS
+    global TEXTS_BILINGUAL, TEXTS, BUTTON_STYLES
     try:
         creds_json = os.getenv("GOOGLE_CREDENTIALS")
         sheet_key  = os.getenv("SHEET_KEY")
@@ -122,6 +128,7 @@ def load_texts() -> None:
 
         bilingual = {}
         mono      = {}
+        styles    = {}
 
         for row in rows:
             # نتجاهل صفوف الهيدر أو الفارغة
@@ -130,6 +137,8 @@ def load_texts() -> None:
             key    = row[0].strip()
             ar_val = row[1].strip() if len(row) > 1 else ""
             en_val = row[2].strip() if len(row) > 2 else ""
+            # عمود D — لون الزر (اختياري)
+            style  = row[3].strip().lower() if len(row) > 3 else ""
 
             # نخزّن فقط المفاتيح المعروفة لبوت التواصل
             if key not in DEFAULT_TEXTS:
@@ -141,6 +150,9 @@ def load_texts() -> None:
             }
             # TEXTS الأحادي → العربي (للتوافق مع الكود القديم)
             mono[key] = ar_val or DEFAULT_TEXTS.get(key, "")
+            # حفظ اللون فقط إذا كان صالحاً
+            if style in _VALID_STYLES:
+                styles[key] = style
 
         # أي مفتاح غير موجود في الشيت → القيمة الافتراضية
         for k, v in DEFAULT_TEXTS.items():
@@ -151,12 +163,14 @@ def load_texts() -> None:
 
         TEXTS_BILINGUAL = bilingual
         TEXTS           = mono
-        print(f"✅ نصوص بوت التواصل تحملت من bot_texts ({len(bilingual)} مفتاح)")
+        BUTTON_STYLES   = styles
+        print(f"✅ نصوص بوت التواصل تحملت من bot_texts ({len(bilingual)} مفتاح، {len(styles)} زر ملوّن)")
 
     except Exception as e:
         print(f"⚠️ خطأ في تحميل نصوص بوت التواصل: {e} — سيتم استخدام الافتراضي")
         TEXTS_BILINGUAL = {k: {"ar": v, "en": v} for k, v in DEFAULT_TEXTS.items()}
         TEXTS           = dict(DEFAULT_TEXTS)
+        BUTTON_STYLES   = {}
 
 # ── Google Sheets — جلب الأدمن ────────────────────────
 def _get_users_sheet():
@@ -207,11 +221,21 @@ def now_str() -> str:
 def is_admin(update: Update) -> bool:
     return update.message.chat_id in get_contact_bot_admins()
 
+def _make_button(text_key: str, label: str) -> KeyboardButton:
+    """ينشئ KeyboardButton مع لون من الشيت إذا وُجد."""
+    style = BUTTON_STYLES.get(text_key, "")
+    if style in _VALID_STYLES:
+        return KeyboardButton(label, style=style)
+    return KeyboardButton(label)
+
 def admin_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("↩️ /reply"), KeyboardButton("🚫 /block")],
-        [KeyboardButton("✅ /unblock"), KeyboardButton("📊 /stats")],
-        [KeyboardButton("🌙 /away"), KeyboardButton("☀️ /back")],
+        [_make_button("reply_sent",      "↩️ /reply"),
+         _make_button("block_success",   "🚫 /block")],
+        [_make_button("unblock_success", "✅ /unblock"),
+         _make_button("stats_text",      "📊 /stats")],
+        [_make_button("away_on",         "🌙 /away"),
+         _make_button("away_off",        "☀️ /back")],
     ], resize_keyboard=True)
 
 # ── Handlers ──────────────────────────────────────────
