@@ -3571,6 +3571,18 @@ def start_message(message):
         if not is_pending(uid):
             pending_requests.add(uid)
 
+        # ── تحقق هل الرقم موجود في الشيت مسبقاً ──
+        _row_idx, _user_row = find_user_row_by_id(uid)
+        _has_phone = bool(_user_row and len(_user_row) > 1 and _user_row[1].strip())
+
+        if _has_phone:
+            # الرقم موجود → أرسل طلب للمالك مباشرة بدون طلب الرقم مجدداً
+            _uname   = _user_row[0].strip() if _user_row else (message.from_user.full_name or "مجهول")
+            _uphone  = _user_row[1].strip()
+            notify_owners_new_request(uid, _uname, _uphone)
+            bot.send_message(message.chat.id, bt("رسالة_انتظار", uid))
+            return
+
         # ١ - الترتيب: لا أريد أولاً (أحمر)، مشاركة ثانياً (أخضر)
         inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
         inline_markup.row(
@@ -3674,6 +3686,13 @@ def handle_request_contact_back(call):
     uid = call.from_user.id
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
+
+    # إخفاء زر الكيبورد (رسالة 👇) إذا كانت ظاهرة
+    try:
+        bot.send_message(call.message.chat.id, "​",
+                         reply_markup=telebot.types.ReplyKeyboardRemove())
+    except:
+        pass
 
     inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     inline_markup.row(
