@@ -228,18 +228,29 @@ DEFAULT_BOT_TEXTS = {
 }
 BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 
+# ── ألوان الأزرار من عمود D في الشيت ──────────────────
+# القيم المقبولة: danger (أحمر)، success (أخضر)، primary (أزرق)، فارغ (افتراضي)
+BUTTON_STYLES: dict[str, str] = {}
+_VALID_STYLES = {"danger", "success", "primary"}
+
 def load_bot_texts():
-    global BOT_TEXTS
+    global BOT_TEXTS, BUTTON_STYLES
     try:
         rows = bot_texts_sheet.get_all_values()
+        styles = {}
         for row in rows:
             if len(row) >= 2 and row[0].strip():
                 key = row[0].strip()
                 ar_text = row[1].strip() if len(row) > 1 else ""
                 en_text = row[2].strip() if len(row) > 2 else ""
+                # عمود D — لون الزر (اختياري)
+                style = row[3].strip().lower() if len(row) > 3 else ""
                 BOT_TEXTS[f"{key}_ar"] = ar_text if ar_text else DEFAULT_BOT_TEXTS.get(f"{key}_ar", key)
                 BOT_TEXTS[f"{key}_en"] = en_text if en_text else DEFAULT_BOT_TEXTS.get(f"{key}_en", key)
-        logger.info("✅ bot_texts loaded with bilingual support")
+                if style in _VALID_STYLES:
+                    styles[key] = style
+        BUTTON_STYLES = styles
+        logger.info(f"✅ bot_texts loaded with bilingual support ({len(styles)} أزرار ملوّنة)")
     except Exception as e:
         logger.warning(f"bot_texts error: {e}")
 
@@ -255,6 +266,17 @@ def bt(key, uid=None):
     if fallback_key in BOT_TEXTS:
         return BOT_TEXTS[fallback_key]
     return DEFAULT_BOT_TEXTS.get(f"{key}_ar", key)
+
+def _make_btn(key, uid=None):
+    """ينشئ KeyboardButton مع لون من الشيت إذا وُجد — يسقط بأمان إذا المكتبة لم تدعمه."""
+    label = bt(key, uid)
+    style = BUTTON_STYLES.get(key, "")
+    if style in _VALID_STYLES:
+        try:
+            return telebot.types.KeyboardButton(label, style=style)
+        except Exception:
+            pass
+    return telebot.types.KeyboardButton(label)
 
 # ─────────────────────────────────────────────────────
 # متغيرات الحالة
