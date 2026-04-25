@@ -278,6 +278,16 @@ def _make_btn(key, uid=None):
             pass
     return telebot.types.KeyboardButton(label)
 
+def _make_inline(key, label, callback_data):
+    """ينشئ InlineKeyboardButton مع لون من الشيت إذا وُجد — يسقط بأمان إذا المكتبة لم تدعمه."""
+    style = BUTTON_STYLES.get(key, "")
+    if style in _VALID_STYLES:
+        try:
+            return telebot.types.InlineKeyboardButton(label, callback_data=callback_data, style=style)
+        except Exception:
+            pass
+    return telebot.types.InlineKeyboardButton(label, callback_data=callback_data)
+
 # ─────────────────────────────────────────────────────
 # متغيرات الحالة
 # ─────────────────────────────────────────────────────
@@ -738,9 +748,9 @@ def _schedule_card_markup(short_key):
     """أزرار البطاقة"""
     mk = telebot.types.InlineKeyboardMarkup(row_width=3)
     mk.row(
-        telebot.types.InlineKeyboardButton("✅ قبول وإضافة", callback_data=f"sched_accept_{short_key}"),
-        telebot.types.InlineKeyboardButton("✏️ تعديل", callback_data=f"sched_edit_{short_key}"),
-        telebot.types.InlineKeyboardButton("❌ إلغاء", callback_data=f"sched_cancel_{short_key}"),
+        _make_inline("زر_sched_accept", "✅ قبول وإضافة", f"sched_accept_{short_key}"),
+        _make_inline("زر_sched_edit",   "✏️ تعديل",       f"sched_edit_{short_key}"),
+        _make_inline("زر_sched_cancel", "❌ إلغاء",        f"sched_cancel_{short_key}"),
     )
     return mk
 
@@ -2334,9 +2344,9 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         preview = "\n".join([f"📌 {item.strip()}" for item in matches])
         markup = telebot.types.InlineKeyboardMarkup(row_width=3)
         markup.add(
-            telebot.types.InlineKeyboardButton("✅ إرسال", callback_data=f"confirm_multi_{short_key}"),
-            telebot.types.InlineKeyboardButton("✏️ تعديل", callback_data=f"edit_multi_{short_key}"),
-            telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_multi_{short_key}"),
+            _make_inline("زر_confirm_multi", "✅ إرسال", f"confirm_multi_{short_key}"),
+            _make_inline("زر_edit_multi",    "✏️ تعديل", f"edit_multi_{short_key}"),
+            _make_inline("زر_reject_multi",  "❌ رفض",   f"reject_multi_{short_key}"),
         )
         return True, f"📋 *سيتم إضافة البيانات التالية:*\n\n{preview}\n\nهل تريد المتابعة؟", markup
 
@@ -2737,13 +2747,13 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
             f"━━━━━━━━━━━━━━━━━━━━")
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        telebot.types.InlineKeyboardButton("⭐ أدمن", callback_data=f"approve_role_admin_{short_key}"),
-        telebot.types.InlineKeyboardButton("👤 مستخدم", callback_data=f"approve_role_user_{short_key}"),
+        _make_inline("زر_approve_admin",  "⭐ أدمن",         f"approve_role_admin_{short_key}"),
+        _make_inline("زر_approve_user",   "👤 مستخدم",       f"approve_role_user_{short_key}"),
     )
     markup.row(
-        telebot.types.InlineKeyboardButton("✏️ تغيير الاسم", callback_data=f"approve_rename_{short_key}"),
-        telebot.types.InlineKeyboardButton("🤖 تفعيل AI", callback_data=f"approve_ai_on_{short_key}"),
-        telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"reject_{short_key}"),
+        _make_inline("زر_approve_rename", "✏️ تغيير الاسم",  f"approve_rename_{short_key}"),
+        _make_inline("زر_approve_ai",     "🤖 تفعيل AI",     f"approve_ai_on_{short_key}"),
+        _make_inline("زر_reject",         "❌ رفض",           f"reject_{short_key}"),
     )
     if requester_id not in request_msg_ids:
         request_msg_ids[requester_id] = {}
@@ -3103,15 +3113,16 @@ def send_user_card(chat_id, row, edit_existing=False):
         user_btn_text  = "👤 منح صلاحية"
 
     markup.row(
-        telebot.types.InlineKeyboardButton(admin_btn_text, callback_data=f"role_admin_{uid_str}"),
-        telebot.types.InlineKeyboardButton(user_btn_text,  callback_data=f"role_user_{uid_str}"),
+        _make_inline("زر_role_admin", admin_btn_text, f"role_admin_{uid_str}"),
+        _make_inline("زر_role_user",  user_btn_text,  f"role_user_{uid_str}"),
     )
 
     # الصف الثاني: تفعيل/تعطيل AI + تغيير الاسم
     ai_button_text = "🚫 تعطيل AI" if ai_val == "TRUE" else "🤖 تفعيل AI"
+    ai_key = "زر_ai_off" if ai_val == "TRUE" else "زر_ai_on"
     markup.row(
-        telebot.types.InlineKeyboardButton(ai_button_text, callback_data=f"ai_{'off' if ai_val == 'TRUE' else 'on'}_{uid_str}"),
-        telebot.types.InlineKeyboardButton("✏️ تغيير الاسم", callback_data=f"rename_{uid_str}"),
+        _make_inline(ai_key,           ai_button_text,   f"ai_{'off' if ai_val == 'TRUE' else 'on'}_{uid_str}"),
+        _make_inline("زر_rename_user", "✏️ تغيير الاسم", f"rename_{uid_str}"),
     )
 
     if edit_existing and int(uid_str) in _user_card_messages:
@@ -3608,8 +3619,8 @@ def start_message(message):
         # ١ - الترتيب: لا أريد أولاً (أحمر)، مشاركة ثانياً (أخضر)
         inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
         inline_markup.row(
-            telebot.types.InlineKeyboardButton("🔴 " + bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
-            telebot.types.InlineKeyboardButton("🟢 " + bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
+            _make_inline("زر_لا_اريد",    "🔴 " + bt("زر_لا_اريد", uid),    "request_contact_no"),
+            _make_inline("زر_مشاركة_رقم", "🟢 " + bt("زر_مشاركة_رقم", uid), "request_contact"),
         )
 
         caption = bt("رسالة_غير_مسموح", uid)
@@ -3647,9 +3658,7 @@ def handle_request_contact_confirm(call):
 
     # زر رجوع inline (يُرفق مع الرسالة الأصلية)
     back_markup = telebot.types.InlineKeyboardMarkup()
-    back_markup.add(telebot.types.InlineKeyboardButton(
-        bt("زر_عوده_مشاركه", uid), callback_data="request_contact_back"
-    ))
+    back_markup.add(_make_inline("زر_عوده_مشاركه", bt("زر_عوده_مشاركه", uid), "request_contact_back"))
 
     # نعدّل الرسالة الأصلية لإضافة زر الرجوع
     try:
@@ -3680,12 +3689,8 @@ def handle_request_contact_no(call):
     # ٣ - استبدال الرسالة الأولى بالرسالة البديلة (بدون رسالة جديدة)
     contact_url = bt("رابط_بوت_تواصل", uid)
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton(
-        bt("زر_بوت_تواصل", uid), url=contact_url
-    ))
-    markup.add(telebot.types.InlineKeyboardButton(
-        bt("زر_عوده_مشاركه", uid), callback_data="request_contact_back"
-    ))
+    markup.add(telebot.types.InlineKeyboardButton(bt("زر_بوت_تواصل", uid), url=contact_url))
+    markup.add(_make_inline("زر_عوده_مشاركه", bt("زر_عوده_مشاركه", uid), "request_contact_back"))
     try:
         bot.edit_message_caption(
             bt("رسالة_لا_اريد", uid),
@@ -3718,8 +3723,8 @@ def handle_request_contact_back(call):
 
     inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     inline_markup.row(
-        telebot.types.InlineKeyboardButton("🔴 " + bt("زر_لا_اريد", uid),    callback_data="request_contact_no"),
-        telebot.types.InlineKeyboardButton("🟢 " + bt("زر_مشاركة_رقم", uid), callback_data="request_contact"),
+        _make_inline("زر_لا_اريد",    "🔴 " + bt("زر_لا_اريد", uid),    "request_contact_no"),
+        _make_inline("زر_مشاركة_رقم", "🟢 " + bt("زر_مشاركة_رقم", uid), "request_contact"),
     )
     caption = bt("رسالة_غير_مسموح", uid)
     try:
@@ -4309,8 +4314,8 @@ def handle_message(message):
                 # ليس لديه صلاحية → اسأله إذا يريد طلب صلاحية
                 markup = telebot.types.InlineKeyboardMarkup()
                 markup.row(
-                    telebot.types.InlineKeyboardButton("✅ نعم", callback_data="ai_request_yes"),
-                    telebot.types.InlineKeyboardButton("❌ لا", callback_data="ai_request_no"),
+                    _make_inline("زر_ai_request_yes", "✅ نعم", "ai_request_yes"),
+                    _make_inline("زر_ai_request_no",  "❌ لا",  "ai_request_no"),
                 )
                 bot.send_message(
                     message.chat.id,
@@ -4851,8 +4856,8 @@ def handle_message(message):
                         _file_req_store[short_key] = {"req_uid": req_uid, "date": date, "subj": subj, "col": col, "fid": fid}
                         mk_req = telebot.types.InlineKeyboardMarkup()
                         mk_req.row(
-                            telebot.types.InlineKeyboardButton("✅ قبول", callback_data=f"file_req:approve:{short_key}"),
-                            telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"file_req:reject:{short_key}")
+                            _make_inline("زر_file_approve", "✅ قبول", f"file_req:approve:{short_key}"),
+                            _make_inline("زر_file_reject",  "❌ رفض",  f"file_req:reject:{short_key}"),
                         )
                         caption = (f"📨 طلب رفع {col_label}\n👤 من: {message.from_user.full_name}\n📌 {subj} | 📅 {date}")
                         for tid in targets:
@@ -5970,8 +5975,8 @@ def handle_ai_permission_request(call):
         )
         markup_owners = telebot.types.InlineKeyboardMarkup()
         markup_owners.row(
-            telebot.types.InlineKeyboardButton("✅ منح الصلاحية", callback_data=f"grant_ai_{uid}"),
-            telebot.types.InlineKeyboardButton("❌ رفض", callback_data=f"deny_ai_{uid}"),
+            _make_inline("زر_grant_ai", "✅ منح الصلاحية", f"grant_ai_{uid}"),
+            _make_inline("زر_deny_ai",  "❌ رفض",           f"deny_ai_{uid}"),
         )
         sent_any = False
         for oid in owners:
