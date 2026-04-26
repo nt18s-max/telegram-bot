@@ -3676,22 +3676,14 @@ def handle_request_contact_confirm(call):
         except:
             pass
 
-    # إرسال زر الكيبورد بدون نص ظاهر
-    bot.send_message(call.message.chat.id, "\u200b", reply_markup=keyboard)
+    # إرسال زر الكيبورد
+    bot.send_message(call.message.chat.id, bt("رسالة_مشاركة_كيبورد", uid) or "📲", reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
     uid = call.from_user.id
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
-
-    # أرسل رسالة بـ ReplyKeyboardRemove لإخفاء زر الكيبورد فوراً ثم احذفها
-    try:
-        rm_msg = bot.send_message(call.message.chat.id, "​",
-                                  reply_markup=telebot.types.ReplyKeyboardRemove())
-        bot.delete_message(call.message.chat.id, rm_msg.message_id)
-    except:
-        pass
 
     # استبدال الرسالة الأولى بالرسالة البديلة
     contact_url = bt("رابط_بوت_تواصل", uid)
@@ -3721,11 +3713,10 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إخفاء زر الكيبورد فوراً ثم حذف الرسالة المؤقتة
+    # إخفاء زر الكيبورد
     try:
-        rm_msg = bot.send_message(call.message.chat.id, "​",
-                                  reply_markup=telebot.types.ReplyKeyboardRemove())
-        bot.delete_message(call.message.chat.id, rm_msg.message_id)
+        bot.send_message(call.message.chat.id, "​",
+                         reply_markup=telebot.types.ReplyKeyboardRemove())
     except:
         pass
 
