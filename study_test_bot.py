@@ -3677,7 +3677,7 @@ def handle_request_contact_confirm(call):
             pass
 
     # إرسال زر الكيبورد
-    bot.send_message(call.message.chat.id, bt("رسالة_مشاركة_كيبورد", uid) or "📲", reply_markup=keyboard)
+    bot.send_message(call.message.chat.id, ".", reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
@@ -3713,10 +3713,12 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إخفاء زر الكيبورد
+    # إخفاء زر الكيبورد — إرسال رسالة مؤقتة ثم حذفها
     try:
-        bot.send_message(call.message.chat.id, "​",
-                         reply_markup=telebot.types.ReplyKeyboardRemove())
+        _rm = bot.send_message(call.message.chat.id, ".",
+                               reply_markup=telebot.types.ReplyKeyboardRemove())
+        import time; time.sleep(0.3)
+        bot.delete_message(call.message.chat.id, _rm.message_id)
     except:
         pass
 
