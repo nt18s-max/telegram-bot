@@ -3676,14 +3676,20 @@ def handle_request_contact_confirm(call):
         except:
             pass
 
-    # رسالة واحدة فقط تحتوي 👇 + زر الكيبورد (ليس رسالتين)
-    bot.send_message(call.message.chat.id, "👇", reply_markup=keyboard)
+    # إرسال زر الكيبورد بدون نص ظاهر
+    bot.send_message(call.message.chat.id, "\u200b", reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
     uid = call.from_user.id
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
+    # إخفاء زر الكيبورد إذا كان ظاهراً
+    try:
+        bot.send_message(call.message.chat.id, "​",
+                         reply_markup=telebot.types.ReplyKeyboardRemove())
+    except:
+        pass
 
     # ٣ - استبدال الرسالة الأولى بالرسالة البديلة (بدون رسالة جديدة)
     contact_url = bt("رابط_بوت_تواصل", uid)
