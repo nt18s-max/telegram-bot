@@ -3684,14 +3684,16 @@ def handle_request_contact_no(call):
     uid = call.from_user.id
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
-    # إخفاء زر الكيبورد إذا كان ظاهراً
+
+    # أرسل رسالة بـ ReplyKeyboardRemove لإخفاء زر الكيبورد فوراً ثم احذفها
     try:
-        bot.send_message(call.message.chat.id, "​",
-                         reply_markup=telebot.types.ReplyKeyboardRemove())
+        rm_msg = bot.send_message(call.message.chat.id, "​",
+                                  reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.delete_message(call.message.chat.id, rm_msg.message_id)
     except:
         pass
 
-    # ٣ - استبدال الرسالة الأولى بالرسالة البديلة (بدون رسالة جديدة)
+    # استبدال الرسالة الأولى بالرسالة البديلة
     contact_url = bt("رابط_بوت_تواصل", uid)
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton(bt("زر_بوت_تواصل", uid), url=contact_url))
@@ -3719,10 +3721,11 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إخفاء زر الكيبورد (رسالة 👇) إذا كانت ظاهرة
+    # إخفاء زر الكيبورد فوراً ثم حذف الرسالة المؤقتة
     try:
-        bot.send_message(call.message.chat.id, "​",
-                         reply_markup=telebot.types.ReplyKeyboardRemove())
+        rm_msg = bot.send_message(call.message.chat.id, "​",
+                                  reply_markup=telebot.types.ReplyKeyboardRemove())
+        bot.delete_message(call.message.chat.id, rm_msg.message_id)
     except:
         pass
 
@@ -3782,6 +3785,11 @@ def refresh_command(message):
             f"🔄 cache المستخدمين والبيانات أُبطل.",
             message.chat.id, msg.message_id)
     else:
+        # يحدّث النصوص والأزرار للجميع
+        load_bot_texts()
+        load_button_texts()
+        invalidate_users_cache()
+        invalidate_sheet_cache()
         bot.edit_message_text("✅ تم تجديد البيانات", message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['ai_reset'])
