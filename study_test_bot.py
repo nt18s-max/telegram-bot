@@ -3683,7 +3683,7 @@ def handle_request_contact_confirm(call):
 
     # إرسال زر الكيبورد وحفظ message_id لحذفه عند الرجوع
     try:
-        _kb_msg = bot.send_message(call.message.chat.id, "\u200b",
+        _kb_msg = bot.send_message(call.message.chat.id, "📲",
                                    reply_markup=keyboard)
         _pending_kb_msgs[uid] = _kb_msg.message_id
     except:
@@ -3723,48 +3723,46 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    def _back_flow():
+    # ① إعادة أزرار المحادثة فوراً
+    inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    inline_markup.row(
+        _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
+        _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
+    )
+    caption = bt("رسالة_غير_مسموح", uid)
+    try:
+        bot.edit_message_caption(
+            caption, call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=inline_markup
+        )
+    except:
         try:
-            # ١ — حذف رسالة الكيبورد المحفوظة
+            bot.edit_message_text(
+                caption, call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=inline_markup
+            )
+        except:
+            pass
+
+    # ② بالتوازي: حذف رسالة الكيبورد + إرسال رسالة حذف الكيبورد السفلي ثم حذفها
+    def _remove_kb():
+        try:
             kb_mid = _pending_kb_msgs.pop(uid, None)
             if kb_mid:
                 try: bot.delete_message(call.message.chat.id, kb_mid)
                 except: pass
-
-            # ٢ — إرسال رسالة "جاري الحذف" مع ReplyKeyboardRemove لإخفاء الكيبورد
-            transition_text = bt("رسالة_جاري_الحذف", uid) or "⏳"
-            rm_msg = bot.send_message(call.message.chat.id, transition_text,
-                                      reply_markup=telebot.types.ReplyKeyboardRemove())
+            rm_msg = bot.send_message(
+                call.message.chat.id,
+                bt("رسالة_جاري_الحذف", uid) or "⏳",
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
             time.sleep(0.5)
-
-            # ٣ — حذف رسالة "جاري الحذف"
             try: bot.delete_message(call.message.chat.id, rm_msg.message_id)
             except: pass
-
-            # ٤ — إعادة إرسال أزرار المحادثة الأصلية
-            inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-            inline_markup.row(
-                _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
-                _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
-            )
-            caption = bt("رسالة_غير_مسموح", uid)
-            try:
-                bot.edit_message_caption(
-                    caption, call.message.chat.id, call.message.message_id,
-                    parse_mode="Markdown", reply_markup=inline_markup
-                )
-            except:
-                try:
-                    bot.edit_message_text(
-                        caption, call.message.chat.id, call.message.message_id,
-                        parse_mode="Markdown", reply_markup=inline_markup
-                    )
-                except:
-                    pass
         except Exception as e:
-            log_error(f"_back_flow: {e}", uid)
+            log_error(f"_remove_kb: {e}", uid)
 
-    threading.Thread(target=_back_flow, daemon=True).start()
+    threading.Thread(target=_remove_kb, daemon=True).start()
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
