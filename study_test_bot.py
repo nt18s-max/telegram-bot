@@ -217,8 +217,6 @@ DEFAULT_BOT_TEXTS = {
     "زر_مشاركة_كيبورد_ar": "",
     "زر_مشاركة_كيبورد_en": "",
     "زر_عوده_مشاركه_ar": "",
-    "رسالة_جاري_الحذف_ar": "",
-    "رسالة_جاري_الحذف_en": "",
     "رسالة_كيبورد_مشاركة_ar": "",
     "رسالة_كيبورد_مشاركة_en": "",
     "زر_عوده_مشاركه_en": "",
@@ -3749,16 +3747,17 @@ def handle_request_contact_back(call):
     # ② بالتوازي: حذف رسالة الكيبورد + إرسال رسالة حذف الكيبورد السفلي ثم حذفها
     def _remove_kb():
         try:
+            # حذف رسالة_كيبورد_مشاركة
             kb_mid = _pending_kb_msgs.pop(uid, None)
             if kb_mid:
                 try: bot.delete_message(call.message.chat.id, kb_mid)
                 except: pass
+            # إرسال ReplyKeyboardRemove لإخفاء الكيبورد السفلي ثم حذفها
             rm_msg = bot.send_message(
-                call.message.chat.id,
-                bt("رسالة_جاري_الحذف", uid) or "⏳",
+                call.message.chat.id, "​",
                 reply_markup=telebot.types.ReplyKeyboardRemove()
             )
-            time.sleep(0.5)
+            time.sleep(0.3)
             try: bot.delete_message(call.message.chat.id, rm_msg.message_id)
             except: pass
         except Exception as e:
