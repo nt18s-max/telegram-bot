@@ -219,6 +219,8 @@ DEFAULT_BOT_TEXTS = {
     "زر_عوده_مشاركه_ar": "",
     "رسالة_جاري_الحذف_ar": "",
     "رسالة_جاري_الحذف_en": "",
+    "رسالة_كيبورد_مشاركة_ar": "",
+    "رسالة_كيبورد_مشاركة_en": "",
     "زر_عوده_مشاركه_en": "",
     "رسالة_لا_اريد_ar": "",
     "رسالة_لا_اريد_en": "",
@@ -3683,7 +3685,7 @@ def handle_request_contact_confirm(call):
 
     # إرسال زر الكيبورد وحفظ message_id لحذفه عند الرجوع
     try:
-        _kb_msg = bot.send_message(call.message.chat.id, "📲",
+        _kb_msg = bot.send_message(call.message.chat.id, bt("رسالة_كيبورد_مشاركة", uid) or "📲",
                                    reply_markup=keyboard)
         _pending_kb_msgs[uid] = _kb_msg.message_id
     except:
@@ -3694,7 +3696,7 @@ def handle_request_contact_no(call):
     uid = call.from_user.id
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
-
+    # لا يوجد كيبورد هنا — استبدال الرسالة مباشرة بدون أي إرسال إضافي
     # استبدال الرسالة الأولى بالرسالة البديلة
     contact_url = bt("رابط_بوت_تواصل", uid)
     markup = telebot.types.InlineKeyboardMarkup()
