@@ -217,6 +217,8 @@ DEFAULT_BOT_TEXTS = {
     "زر_مشاركة_كيبورد_ar": "",
     "زر_مشاركة_كيبورد_en": "",
     "زر_عوده_مشاركه_ar": "",
+    "رسالة_جاري_الحذف_ar": "",
+    "رسالة_جاري_الحذف_en": "",
     "زر_عوده_مشاركه_en": "",
     "رسالة_لا_اريد_ar": "",
     "رسالة_لا_اريد_en": "",
@@ -224,6 +226,8 @@ DEFAULT_BOT_TEXTS = {
     "زر_بوت_تواصل_en": "",
     "رابط_بوت_تواصل_ar": "",
     "رابط_بوت_تواصل_en": "",
+    "رسالة_جاري_الحذف_ar": "",
+    "رسالة_جاري_الحذف_en": "",
 }
 BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 
@@ -307,6 +311,7 @@ _log_messages = {}
 _user_card_messages = {}
 _pending_files = {}
 _naif_files = {}
+_pending_kb_msgs = {}  # تخزين message_id لرسائل الكيبورد المؤقتة {uid: msg_id}
 _schedule_cards = {}   # تخزين بطاقات الجدول المستخرجة مؤقتاً: {short_key: {uid, entries, msg_id, chat_id}}
 
 # ─────────────────────────────────────────────────────
@@ -3676,8 +3681,13 @@ def handle_request_contact_confirm(call):
         except:
             pass
 
-    # إرسال زر الكيبورد
-    bot.send_message(call.message.chat.id, ".", reply_markup=keyboard)
+    # إرسال زر الكيبورد وحفظ message_id لحذفه عند الرجوع
+    try:
+        _kb_msg = bot.send_message(call.message.chat.id, "\u200b",
+                                   reply_markup=keyboard)
+        _pending_kb_msgs[uid] = _kb_msg.message_id
+    except:
+        pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "request_contact_no")
 def handle_request_contact_no(call):
@@ -3713,34 +3723,48 @@ def handle_request_contact_back(call):
     load_user_lang(uid)
     bot.answer_callback_query(call.id)
 
-    # إخفاء زر الكيبورد — إرسال رسالة مؤقتة ثم حذفها
-    try:
-        _rm = bot.send_message(call.message.chat.id, ".",
-                               reply_markup=telebot.types.ReplyKeyboardRemove())
-        import time; time.sleep(0.3)
-        bot.delete_message(call.message.chat.id, _rm.message_id)
-    except:
-        pass
-
-    inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    inline_markup.row(
-        _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
-        _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
-    )
-    caption = bt("رسالة_غير_مسموح", uid)
-    try:
-        bot.edit_message_caption(
-            caption, call.message.chat.id, call.message.message_id,
-            parse_mode="Markdown", reply_markup=inline_markup
-        )
-    except:
+    def _back_flow():
         try:
-            bot.edit_message_text(
-                caption, call.message.chat.id, call.message.message_id,
-                parse_mode="Markdown", reply_markup=inline_markup
+            # ١ — حذف رسالة الكيبورد المحفوظة
+            kb_mid = _pending_kb_msgs.pop(uid, None)
+            if kb_mid:
+                try: bot.delete_message(call.message.chat.id, kb_mid)
+                except: pass
+
+            # ٢ — إرسال رسالة "جاري الحذف" مع ReplyKeyboardRemove لإخفاء الكيبورد
+            transition_text = bt("رسالة_جاري_الحذف", uid) or "⏳"
+            rm_msg = bot.send_message(call.message.chat.id, transition_text,
+                                      reply_markup=telebot.types.ReplyKeyboardRemove())
+            time.sleep(0.5)
+
+            # ٣ — حذف رسالة "جاري الحذف"
+            try: bot.delete_message(call.message.chat.id, rm_msg.message_id)
+            except: pass
+
+            # ٤ — إعادة إرسال أزرار المحادثة الأصلية
+            inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+            inline_markup.row(
+                _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
+                _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
             )
-        except:
-            pass
+            caption = bt("رسالة_غير_مسموح", uid)
+            try:
+                bot.edit_message_caption(
+                    caption, call.message.chat.id, call.message.message_id,
+                    parse_mode="Markdown", reply_markup=inline_markup
+                )
+            except:
+                try:
+                    bot.edit_message_text(
+                        caption, call.message.chat.id, call.message.message_id,
+                        parse_mode="Markdown", reply_markup=inline_markup
+                    )
+                except:
+                    pass
+        except Exception as e:
+            log_error(f"_back_flow: {e}", uid)
+
+    threading.Thread(target=_back_flow, daemon=True).start()
 
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
