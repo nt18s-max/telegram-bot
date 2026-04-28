@@ -19,7 +19,6 @@ def run_server():
     server.serve_forever()
 
 def run_bot_subprocess(script_name, token_var):
-    """يشغل كل بوت في process منفصل — لا تعارض في الـ globals أو handlers"""
     while True:
         if not os.environ.get(token_var):
             print(f"ℹ️ {token_var} غير موجود — {script_name} لن يشتغل")
@@ -33,32 +32,47 @@ def run_bot_subprocess(script_name, token_var):
         print(f"❌ {script_name} توقف (exit {proc.returncode}) — إعادة التشغيل بعد 5 ثواني...")
         time.sleep(5)
 
+def run_flask_server():
+    """يشغل سيرفر التطبيق الذكي على port 5001"""
+    try:
+        from server.app import app
+        port = int(os.environ.get("APP_SERVER_PORT", 5001))
+        print(f"▶️ تشغيل سيرفر التطبيق على port {port}...")
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"❌ خطأ في سيرفر التطبيق: {e}")
+
 if __name__ == "__main__":
-    # HTTP Keep-alive server
+    # HTTP Keep-alive
     threading.Thread(target=run_server, daemon=True).start()
 
-    # study_bot — البوت الأصلي
+    # study_bot
     threading.Thread(
         target=run_bot_subprocess,
         args=("study_bot.py", "STUDY_BOT_TOKEN"),
         daemon=True
     ).start()
 
-    # study_test_bot — بوت التطوير (يشتغل فقط لو STUDY_TEST_TOKEN موجود)
+    # study_test_bot
     threading.Thread(
         target=run_bot_subprocess,
         args=("study_test_bot.py", "STUDY_TEST_TOKEN"),
         daemon=True
     ).start()
 
-    # contact_bot — يشتغل كـ subprocess أيضاً لتجنب تعارض asyncio
+    # contact_bot
     threading.Thread(
         target=run_bot_subprocess,
         args=("contact_bot.py", "CONTACT_BOT_TOKEN"),
         daemon=True
     ).start()
 
-    # Main thread يبقى حياً لإبقاء كل الـ daemon threads شغّالة
-    print("✅ جميع البوتات تم تشغيلها")
+    # سيرفر التطبيق الذكي ← جديد
+    threading.Thread(
+        target=run_flask_server,
+        daemon=True
+    ).start()
+
+    print("✅ جميع البوتات والسيرفر تم تشغيلها")
     while True:
         time.sleep(60)
