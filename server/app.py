@@ -1,6 +1,5 @@
 # ====================================================
 # server/app.py — سيرفر التطبيق الذكي
-# يشتغل مع البوتات في نفس الـ process عبر main.py
 # ====================================================
 from flask import Flask, request, jsonify
 import gspread
@@ -10,7 +9,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# ── متغيرات البيئة (نفس البوت) ────────────────────────
+# ── متغيرات البيئة ────────────────────────────────────
 SHEET_KEY      = os.environ.get("SHEET_KEY", "")
 GCREDS_JSON    = os.environ.get("GOOGLE_CREDENTIALS", "")
 GEMINI_KEY     = os.environ.get("GEMINI_API_KEY", "")
@@ -30,6 +29,7 @@ try:
         fb_cred = fb_creds.Certificate(json.loads(FIREBASE_CREDS))
         firebase_admin.initialize_app(fb_cred)
         _firebase_ready = True
+        print("✅ Firebase Admin جاهز")
 except Exception as _e:
     print(f"⚠️ Firebase Admin: {_e}")
 
@@ -40,26 +40,33 @@ def get_sheet():
     return gspread.authorize(creds).open_by_key(SHEET_KEY)
 
 def verify_token(id_token):
-    """تحقق من Firebase Token وأرجع uid أو None"""
     if not _firebase_ready:
         return None
     try:
-        decoded = auth.verify_id_token(id_token)
-        return decoded
+        return auth.verify_id_token(id_token)
     except:
         return None
 
 # ══════════════════════════════════════════════════════
-# 1. تسجيل الدخول والتحقق من الصلاحية
+# Keep-alive
+# ══════════════════════════════════════════════════════
+@app.route("/", methods=["GET"])
+def index():
+    return "Bots are running!", 200
+
+@app.route("/ping", methods=["GET"])
+def ping():
+    return jsonify({"status": "ok", "service": "SmartStudent Server"})
+
+# ══════════════════════════════════════════════════════
+# 1. التحقق من المستخدم
 # ══════════════════════════════════════════════════════
 @app.route("/check_user", methods=["POST"])
 def check_user():
     data      = request.json or {}
     id_token  = data.get("idToken", "")
-    app_hash  = data.get("appHash", "")
     fcm_token = data.get("fcmToken", "")
 
-    # تحقق من Firebase Token
     decoded = verify_token(id_token)
     if not decoded:
         return jsonify({"allowed": False, "reason": "token_invalid"})
@@ -76,9 +83,8 @@ def check_user():
         rows  = sheet.get_all_values()
 
         for i, row in enumerate(rows[1:], start=2):
-            # عمود M = البريد (index 12)، عمود B = الهاتف (index 1)
             row_email = row[12].strip().lower() if len(row) > 12 else ""
-            row_phone = row[1].strip().replace(" ","").replace("-","") \
+            row_phone = row[1].strip().replace(" ", "").replace("-", "") \
                         if len(row) > 1 else ""
 
             match_email = firebase_email and row_email == firebase_email
@@ -90,7 +96,6 @@ def check_user():
             if not (match_email or match_phone):
                 continue
 
-            # وُجد المستخدم ✅
             allowed = str(row[3]).upper() == "TRUE"
             admin   = str(row[4]).upper() == "TRUE"
             owner   = str(row[5]).upper() == "TRUE"
@@ -106,14 +111,11 @@ def check_user():
 
             role = "owner" if owner else ("admin" if admin else "user")
 
-            # حفظ firebase_uid + fcm_token في الشيت
-            updates = {}
+            # حفظ firebase_uid + fcm_token
             if not (row[13].strip() if len(row) > 13 else ""):
-                updates["uid_col"]  = (i, 14, firebase_uid)
+                sheet.update_cell(i, 14, firebase_uid)
             if fcm_token and not (row[14].strip() if len(row) > 14 else ""):
-                updates["fcm_col"]  = (i, 15, fcm_token)
-            for _, (r, c, v) in updates.items():
-                sheet.update_cell(r, c, v)
+                sheet.update_cell(i, 15, fcm_token)
 
             return jsonify({
                 "allowed":   True,
@@ -123,25 +125,24 @@ def check_user():
                 "uid":       firebase_uid
             })
 
-        # المستخدم غير موجود → سجّله تلقائياً
+        # المستخدم غير موجود → سجّله
         display_name = data.get("name", "مجهول")
         sheet.append_row([
             f"🆕 {display_name}",
             firebase_phone or "",
-            "",       # تلجرام ID
+            "",
             False, False, False, False, False,
             False, False, False, False,
-            firebase_email or "",  # M: البريد
-            firebase_uid,          # N: Firebase UID
-            fcm_token or ""        # O: FCM Token
+            firebase_email or "",
+            firebase_uid,
+            fcm_token or ""
         ], value_input_option="USER_ENTERED")
 
-        # إشعار للمالكين
         _notify_owners(
             title="🔔 طلب انضمام جديد",
             body=f"{display_name} | {firebase_email or firebase_phone}",
             data={"type": "join_request", "uid": firebase_uid},
-            sheet=sheet, rows=rows
+            rows=rows
         )
 
         return jsonify({
@@ -202,7 +203,6 @@ def ask_ai():
     if not verify_token(id_token):
         return jsonify({"error": "غير مصرح"})
 
-    # جلب بيانات الشيت كسياق للـ AI
     context = ""
     try:
         ss    = get_sheet()
@@ -222,7 +222,6 @@ def ask_ai():
         f"{context}"
     )
 
-    # جرب Gemini أولاً
     if GEMINI_KEY:
         try:
             url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -246,7 +245,6 @@ def ask_ai():
         except:
             pass
 
-    # جرب OpenRouter
     if OPENROUTER_KEY:
         try:
             headers = {
@@ -273,14 +271,14 @@ def ask_ai():
     return jsonify({"error": "فشل الذكاء الاصطناعي"})
 
 # ══════════════════════════════════════════════════════
-# 4. الموافقة على طلب انضمام (من التطبيق - المالك فقط)
+# 4. الموافقة على طلب انضمام
 # ══════════════════════════════════════════════════════
 @app.route("/approve_user", methods=["POST"])
 def approve_user():
-    data         = request.json or {}
-    id_token     = data.get("idToken", "")
-    target_uid   = data.get("targetUid", "")
-    action       = data.get("action", "")  # approve / reject
+    data       = request.json or {}
+    id_token   = data.get("idToken", "")
+    target_uid = data.get("targetUid", "")
+    action     = data.get("action", "")
 
     decoded = verify_token(id_token)
     if not decoded:
@@ -296,10 +294,10 @@ def approve_user():
             if row_uid != target_uid:
                 continue
 
+            fcm = row[14].strip() if len(row) > 14 else ""
+
             if action == "approve":
-                sheet.update_cell(i, 4, True)  # allowed = TRUE
-                # أرسل إشعار للمستخدم
-                fcm = row[14].strip() if len(row) > 14 else ""
+                sheet.update_cell(i, 4, True)
                 if fcm and _firebase_ready:
                     messaging.send(messaging.Message(
                         token=fcm,
@@ -309,7 +307,6 @@ def approve_user():
                         )
                     ))
             elif action == "reject":
-                fcm = row[14].strip() if len(row) > 14 else ""
                 if fcm and _firebase_ready:
                     messaging.send(messaging.Message(
                         token=fcm,
@@ -338,25 +335,22 @@ def report_tamper():
 
     try:
         ss = get_sheet()
-
-        # احفظ في شيت security_log
         try:
             log = ss.worksheet("security_log")
         except:
             log = ss.add_worksheet("security_log", 100, 5)
-            log.append_row(["التاريخ","الاسم","البريد","Hash","الحدث"])
+            log.append_row(["التاريخ", "الاسم", "البريد", "Hash", "الحدث"])
 
         now = datetime.now(YEMEN_TZ).strftime("%Y-%m-%d %H:%M")
         log.append_row([now, name, email, hash_, "تعديل APK"])
 
-        # إشعار للمالكين
         sheet = ss.worksheet("المستخدمين")
         rows  = sheet.get_all_values()
         _notify_owners(
             title="🚨 تحذير أمان!",
             body=f"تعديل في التطبيق من: {name}",
             data={"type": "tamper", "email": email},
-            sheet=sheet, rows=rows
+            rows=rows
         )
     except:
         pass
@@ -364,15 +358,14 @@ def report_tamper():
     return jsonify({"received": True})
 
 # ══════════════════════════════════════════════════════
-# 6. جلب طلبات الانضمام (للمالك)
+# 6. جلب طلبات الانضمام
 # ══════════════════════════════════════════════════════
 @app.route("/get_requests", methods=["POST"])
 def get_requests():
     data     = request.json or {}
     id_token = data.get("idToken", "")
 
-    decoded = verify_token(id_token)
-    if not decoded:
+    if not verify_token(id_token):
         return jsonify({"error": "غير مصرح"})
 
     try:
@@ -388,7 +381,6 @@ def get_requests():
             uid_str = row[13].strip() if len(row) > 13 else ""
             name    = row[0].strip()
 
-            # الطلبات = مسجلون لكن غير مسموح لهم
             if not allowed and uid_str and name.startswith("🆕"):
                 reqs.append({
                     "name":  name.replace("🆕 ", "").strip(),
@@ -403,9 +395,9 @@ def get_requests():
         return jsonify({"error": str(e)})
 
 # ══════════════════════════════════════════════════════
-# Helper — إرسال إشعار FCM للمالكين
+# Helper — إشعار للمالكين
 # ══════════════════════════════════════════════════════
-def _notify_owners(title, body, data, sheet, rows):
+def _notify_owners(title, body, data, rows):
     if not _firebase_ready:
         return
     for row in rows[1:]:
@@ -415,13 +407,11 @@ def _notify_owners(title, body, data, sheet, rows):
             try:
                 messaging.send(messaging.Message(
                     token=fcm_token,
-                    notification=messaging.Notification(title=title, body=body),
+                    notification=messaging.Notification(
+                        title=title,
+                        body=body
+                    ),
                     data=data
                 ))
             except:
                 pass
-
-# ── Keep-alive ────────────────────────────────────────
-@app.route("/ping", methods=["GET"])
-def ping():
-    return jsonify({"status": "ok", "service": "SmartStudent Server"})
