@@ -3051,7 +3051,8 @@ def _watch_sheet_loop():
                     notify_owners_action(uid, name, phone, "الشيت", "downgrade_admin")
                 elif not new["allowed"] and old["allowed"]:
                     try:
-                        bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.")
+                        bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.",
+                                         reply_markup=telebot.types.ReplyKeyboardRemove())
                     except:
                         pass
                     notify_owners_action(uid, name, phone, "الشيت", "remove")
@@ -4316,10 +4317,33 @@ def handle_message(message):
             return
         if not is_pending(uid):
             pending_requests.add(uid)
-        bot.send_message(message.chat.id, rejection)
-        cm = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        cm.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
-        bot.send_message(message.chat.id, "📲 شارك جهة اتصالك:", reply_markup=cm)
+        # ── النظام الجديد: inline buttons فقط + حذف أزرار البوت القديمة ──
+        # أولاً: احذف أزرار البوت القديمة إذا كانت موجودة
+        try:
+            rm_msg = bot.send_message(message.chat.id, "​",
+                                      reply_markup=telebot.types.ReplyKeyboardRemove())
+            bot.delete_message(message.chat.id, rm_msg.message_id)
+        except:
+            pass
+        # ثانياً: أرسل شاشة الطلب بالنظام الجديد
+        inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+        inline_markup.row(
+            _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
+            _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
+        )
+        caption = bt("رسالة_غير_مسموح", uid)
+        help_image_id = get_help_file_id("help_request_photo", "photo")
+        if help_image_id:
+            try:
+                bot.send_photo(message.chat.id, help_image_id,
+                               caption=caption, parse_mode="Markdown",
+                               reply_markup=inline_markup)
+            except:
+                bot.send_message(message.chat.id, caption,
+                                 parse_mode="Markdown", reply_markup=inline_markup)
+        else:
+            bot.send_message(message.chat.id, caption,
+                             parse_mode="Markdown", reply_markup=inline_markup)
         return
 
     if sheet is None:
@@ -5473,7 +5497,8 @@ def handle_role(call):
                     # أدمن + ضغط أدمن → إقفال كامل
                     users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                     label = "🔒 تم إقفال صلاحياته"
-                    try: bot.send_message(int(target_uid), "🔒 تم إقفال صلاحيتك من البوت.")
+                    try: bot.send_message(int(target_uid), "🔒 تم إقفال صلاحيتك من البوت.",
+                                          reply_markup=telebot.types.ReplyKeyboardRemove())
                     except: pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
                 elif cur_own == "TRUE":
@@ -5497,7 +5522,8 @@ def handle_role(call):
                     # مستخدم عادي + ضغط مستخدم → إلغاء صلاحية نهائياً
                     users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                     label = "⛔ تم إلغاء الصلاحية"
-                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.")
+                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.",
+                                          reply_markup=telebot.types.ReplyKeyboardRemove())
                     except: pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
                 elif cur_adm == "TRUE" and cur_own != "TRUE":
@@ -5562,7 +5588,8 @@ def handle_role_revoke(call):
             decided_by = f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name
             # إلغاء كل الصلاحيات
             users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
-            try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.")
+            try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.",
+                                  reply_markup=telebot.types.ReplyKeyboardRemove())
             except: pass
             invalidate_users_cache()
             notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
