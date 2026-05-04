@@ -2746,8 +2746,8 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
         "phone": phone,
     }
     ph = f"\n📞 `{phone}`" if phone else ""
-    text = (f"👤 *طلب انضمام جديد*\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 {requester_name}\n🆔 `{requester_id}`{ph}\n"
+    text = (f"❌ *طلب انضمام جديد*\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"❌ {requester_name}\n🆔 `{requester_id}`{ph}\n"
             f"━━━━━━━━━━━━━━━━━━━━")
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.row(
@@ -3051,8 +3051,7 @@ def _watch_sheet_loop():
                     notify_owners_action(uid, name, phone, "الشيت", "downgrade_admin")
                 elif not new["allowed"] and old["allowed"]:
                     try:
-                        bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.",
-                                         reply_markup=telebot.types.ReplyKeyboardRemove())
+                        bot.send_message(uid, "⛔ تم إلغاء صلاحيتك.")
                     except:
                         pass
                     notify_owners_action(uid, name, phone, "الشيت", "remove")
@@ -3144,8 +3143,8 @@ def send_user_card(chat_id, row, edit_existing=False):
 def format_all_users_message():
     try:
         rows = users_sheet.get_all_values()
-        active_lines  = ["👥 *المستخدمون النشطون:*\n" + "━" * 30]
-        new_lines     = ["\n🆕️ *زوار جدد (لم تُمنح لهم صلاحية بعد):*\n" + "━" * 30]
+        active_lines  = ["👥 *المستخدمون النشطون:*\n" + "━" * 15]
+        new_lines     = ["\n🆕️ *زوار جدد (لم تُمنح لهم صلاحية بعد):*\n" + "━" * 15]
         has_active = has_new = False
 
         for row in rows[1:]:
@@ -3169,14 +3168,14 @@ def format_all_users_message():
             if is_new:
                 has_new = True
                 display_name = name.replace("🆕️ ", "").replace("🆕 ", "").strip()
-                new_lines.append(f"🆕️ `{display_name}`\n🆔 {uid_link}{phone_part}\n─" * 1 + "─" * 29)
+                new_lines.append(f"🆕️ `{display_name}`\n🆔 {uid_link}{phone_part}\n" + "─" * 15)
             else:
                 has_active = True
                 if owner:   icon = "👑"
                 elif admin: icon = "⭐"
                 elif allowed: icon = "👤"
                 else: icon = "❌"
-                active_lines.append(f"{icon}{ai_part} `{name}`\n🆔 {uid_link}{phone_part}\n" + "─" * 30)
+                active_lines.append(f"{icon}{ai_part} `{name}`\n🆔 {uid_link}{phone_part}\n" + "─" * 15)
 
         result = []
         if has_active:
@@ -4317,33 +4316,10 @@ def handle_message(message):
             return
         if not is_pending(uid):
             pending_requests.add(uid)
-        # ── النظام الجديد: inline buttons فقط + حذف أزرار البوت القديمة ──
-        # أولاً: احذف أزرار البوت القديمة إذا كانت موجودة
-        try:
-            rm_msg = bot.send_message(message.chat.id, "​",
-                                      reply_markup=telebot.types.ReplyKeyboardRemove())
-            bot.delete_message(message.chat.id, rm_msg.message_id)
-        except:
-            pass
-        # ثانياً: أرسل شاشة الطلب بالنظام الجديد
-        inline_markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-        inline_markup.row(
-            _make_inline("زر_لا_اريد",    bt("زر_لا_اريد", uid),    "request_contact_no"),
-            _make_inline("زر_مشاركة_رقم", bt("زر_مشاركة_رقم", uid), "request_contact"),
-        )
-        caption = bt("رسالة_غير_مسموح", uid)
-        help_image_id = get_help_file_id("help_request_photo", "photo")
-        if help_image_id:
-            try:
-                bot.send_photo(message.chat.id, help_image_id,
-                               caption=caption, parse_mode="Markdown",
-                               reply_markup=inline_markup)
-            except:
-                bot.send_message(message.chat.id, caption,
-                                 parse_mode="Markdown", reply_markup=inline_markup)
-        else:
-            bot.send_message(message.chat.id, caption,
-                             parse_mode="Markdown", reply_markup=inline_markup)
+        bot.send_message(message.chat.id, rejection)
+        cm = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        cm.add(telebot.types.KeyboardButton("📱 مشاركة جهة الاتصال", request_contact=True))
+        bot.send_message(message.chat.id, "📲 شارك جهة اتصالك:", reply_markup=cm)
         return
 
     if sheet is None:
@@ -4954,17 +4930,21 @@ def handle_message(message):
                 return
 
             elif step == "search_unified":
-                result, stype = _smart_search_user(text.strip())
-                if result is None:
-                    bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
-                elif isinstance(result, list):
-                    bot.send_message(message.chat.id, f"🔍 {len(result)} نتيجة:")
-                    for row in result[:5]:
-                        send_user_card(message.chat.id, row)
-                    if len(result) > 5:
-                        bot.send_message(message.chat.id, f"⚠️ تم عرض 5 من {len(result)}. دقّق بحثك.")
-                else:
-                    send_user_card(message.chat.id, result)
+                try:
+                    result, stype = _smart_search_user(text.strip())
+                    if result is None:
+                        bot.send_message(message.chat.id, "❌ لم يُعثر على مستخدم")
+                    elif isinstance(result, list):
+                        bot.send_message(message.chat.id, f"🔍 {len(result)} نتيجة:")
+                        for row in result[:5]:
+                            send_user_card(message.chat.id, row)
+                        if len(result) > 5:
+                            bot.send_message(message.chat.id, f"⚠️ تم عرض 5 من {len(result)}. دقّق بحثك.")
+                    else:
+                        send_user_card(message.chat.id, result)
+                except Exception as e:
+                    log_error(f"search_unified: {e}", uid)
+                    bot.send_message(message.chat.id, "❌ حدث خطأ في البحث، حاول مرة أخرى.")
                 user_state[uid]["step"] = "menu"
                 bot.send_message(message.chat.id, "👥 إدارة المستخدمين:", reply_markup=manage_users_menu(uid))
                 return
@@ -5497,8 +5477,7 @@ def handle_role(call):
                     # أدمن + ضغط أدمن → إقفال كامل
                     users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                     label = "🔒 تم إقفال صلاحياته"
-                    try: bot.send_message(int(target_uid), "🔒 تم إقفال صلاحيتك من البوت.",
-                                          reply_markup=telebot.types.ReplyKeyboardRemove())
+                    try: bot.send_message(int(target_uid), "🔒 تم إقفال صلاحيتك من البوت.")
                     except: pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
                 elif cur_own == "TRUE":
@@ -5522,8 +5501,7 @@ def handle_role(call):
                     # مستخدم عادي + ضغط مستخدم → إلغاء صلاحية نهائياً
                     users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
                     label = "⛔ تم إلغاء الصلاحية"
-                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.",
-                                          reply_markup=telebot.types.ReplyKeyboardRemove())
+                    try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.")
                     except: pass
                     notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
                 elif cur_adm == "TRUE" and cur_own != "TRUE":
@@ -5588,8 +5566,7 @@ def handle_role_revoke(call):
             decided_by = f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name
             # إلغاء كل الصلاحيات
             users_sheet.update(f"D{i}:F{i}", [[False, False, False]])
-            try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.",
-                                  reply_markup=telebot.types.ReplyKeyboardRemove())
+            try: bot.send_message(int(target_uid), "⛔ تم إلغاء صلاحيتك من البوت.")
             except: pass
             invalidate_users_cache()
             notify_owners_action(int(target_uid), t_name, t_phone, decided_by, "remove")
