@@ -874,8 +874,8 @@ def extract_schedule_from_text(raw_text):
     return None, None  # فشل كل المزودين
 
 def ask_ai(uid, user_text, user_role="user", notify_fn=None, send_notify=True):
+    # ── شرط مبكر: لا AI بدون providers ──
     if not AI_PROVIDERS:
-        log_error(f"لا يوجد مزود AI نشط", uid)
         return None, None
 
     if uid not in _ai_histories:
@@ -966,19 +966,49 @@ AI_ALLOWED_COL = 9
 AUTO_PUBLISH_COL = 10
 AI_SWITCH_COL = 11   # عمود L — حالة سويتش الذكاء الاصطناعي (يحفظها المستخدم)
 
-# ─── Cache للمستخدمين (يمنع Bug الصلاحية الزائفة) ───
+# ─── Cache للمستخدمين — يدوي فقط، لا يُبطل تلقائياً ───
 _users_cache = {"data": None, "ts": 0}
-_USERS_CACHE_TTL = 30  # ثانية
+_USERS_CACHE_TTL = float("inf")  # لا يُبطل تلقائياً — يدوي فقط من بوت اللوج
 
-# ─── Cache للبيانات الرئيسية (sheet data) ───
+# ─── Cache لمستخدمي اللوج (log=TRUE) — يدوي فقط ───
+_log_users_cache: list = []   # قائمة IDs اللي log=TRUE
+_log_users_loaded = False     # هل تم التحميل مرة واحدة عند التشغيل
+
+# ─── Cache للبيانات الرئيسية (sheet data) — تلقائي كل 60 ثانية ───
 _sheet_data_cache = {"data": None, "ts": 0}
 _bot_texts_cache  = {"data": None, "ts": 0}
-_SHEET_CACHE_TTL  = 60  # ثانية — يُحدَّث تلقائياً كل دقيقة
+_SHEET_CACHE_TTL  = 60  # ثانية — البيانات فقط تتحدث تلقائياً
 
 def invalidate_users_cache():
     """إبطال الـ cache فوراً عند أي تغيير في الصلاحيات"""
     _users_cache["data"] = None
     _users_cache["ts"] = 0
+
+def _load_log_users():
+    """تحميل مستخدمي اللوج مرة واحدة عند التشغيل — يدوي بعدها"""
+    global _log_users_cache, _log_users_loaded
+    try:
+        ids = []
+        for row in users_sheet.get_all_values()[1:]:
+            uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
+            if uid_str.isdigit() and (row[7].strip().upper() if len(row) > 7 else "") == "TRUE":
+                ids.append(int(uid_str))
+        _log_users_cache = ids
+        _log_users_loaded = True
+        logger.info(f"✅ log users loaded: {len(ids)} مستخدم")
+    except Exception as e:
+        logger.warning(f"_load_log_users: {e}")
+
+def refresh_log_users():
+    """يُستدعى من endpoint بوت اللوج لتحديث cache مستخدمي اللوج"""
+    _load_log_users()
+
+def get_log_user_ids() -> list:
+    """يرجع IDs مستخدمي اللوج من الـ cache دائماً"""
+    global _log_users_loaded
+    if not _log_users_loaded:
+        _load_log_users()
+    return _log_users_cache
 
 def get_users():
     global _users_cache
@@ -1195,8 +1225,8 @@ def set_user_ai_switch(uid, enabled):
 def load_user_ai_switch(uid):
     """
     يُحمِّل حالة السويتش من الشيت.
-    - إذا AI_PROVIDERS فارغة → السويتش دائماً False في الذاكرة (الزر مخفي)
-    - إذا AI_PROVIDERS موجودة → يقرأ الحالة المحفوظة في الشيت (تعلّمها حتى بعد إعادة التشغيل)
+    - إذا AI_PROVIDERS فارغة → False فوراً بدون أي قراءة
+    - إذا AI_PROVIDERS موجودة → يقرأ الحالة المحفوظة في الشيت مرة واحدة فقط
     """
     if not AI_PROVIDERS:
         user_ai_enabled[uid] = False
@@ -3499,25 +3529,16 @@ def tg_log(level, msg, uid=None):
     else:
         user_block = ""
     text = f"{icons.get(level, '📋')} *{level}*\n`{now}`\n\n{user_block}{msg}"
-    if LOG_BOT_TOKEN and users_sheet:
+    if LOG_BOT_TOKEN:
         try:
-            es = 0
-            for row in users_sheet.get_all_values()[1:]:
-                if not row or not any(c.strip() for c in row):
-                    es += 1
-                    if es >= 5:
-                        break
-                    continue
-                es = 0
-                uid_str = row[2].strip().lstrip("'") if len(row) > 2 else ""
-                if uid_str.isdigit() and (row[7].strip().upper() if len(row) > 7 else "") == "TRUE":
-                    try:
-                        _requests.post(
-                            f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
-                            json={"chat_id": int(uid_str), "text": text, "parse_mode": "Markdown"},
-                            timeout=5)
-                    except:
-                        pass
+            for uid_log in get_log_user_ids():
+                try:
+                    _requests.post(
+                        f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage",
+                        json={"chat_id": uid_log, "text": text, "parse_mode": "Markdown"},
+                        timeout=5)
+                except:
+                    pass
         except:
             pass
     getattr(logger, level.lower(), logger.info)(msg)
@@ -3543,9 +3564,115 @@ def set_bot_commands():
         telebot.types.BotCommand("help", "عرض التعليمات"),
         telebot.types.BotCommand("lang", "تغيير اللغة"),
         telebot.types.BotCommand("ai", "تشغيل المساعد الذكي"),
-        telebot.types.BotCommand("refresh", "تحديث بيانات البوت"),
     ]
     bot.set_my_commands(commands)
+
+# ─────────────────────────────────────────────────────
+# HTTP Endpoint داخلي — يستقبل أوامر من log_bot.py
+# ─────────────────────────────────────────────────────
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse as _urlparse
+
+INTERNAL_PORT = int(os.environ.get("INTERNAL_PORT", 10001))
+_INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "study_bot_secret_2025")
+
+class _InternalHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body   = self.rfile.read(length).decode()
+            params = dict(_urlparse.parse_qsl(body))
+            secret = params.get("secret", "")
+            if secret != _INTERNAL_SECRET:
+                self._respond(403, "forbidden")
+                return
+            cmd = params.get("cmd", "")
+            result = _handle_internal_cmd(cmd)
+            self._respond(200, result)
+        except Exception as e:
+            self._respond(500, str(e))
+
+    def _respond(self, code, text):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(text.encode())
+
+    def log_message(self, *args):
+        pass  # تعطيل logs الافتراضية
+
+def _handle_internal_cmd(cmd: str) -> str:
+    """ينفّذ أمر من بوت اللوج ويرجع رسالة النتيجة"""
+    if cmd == "refresh_texts":
+        load_bot_texts()
+        load_button_texts()
+        return f"✅ نصوص محدّثة — {len(BOT_TEXTS)} مفتاح"
+
+    elif cmd == "refresh_users":
+        invalidate_users_cache()
+        refresh_log_users()
+        user_lang.clear()
+        user_auto_publish.clear()
+        r = get_users()
+        return f"✅ مستخدمون محدّثون — {len(r[0])} مصرح"
+
+    elif cmd == "refresh_ai":
+        old = len(AI_PROVIDERS)
+        load_ai_providers()
+        new = len(AI_PROVIDERS)
+        if not AI_PROVIDERS:
+            user_ai_enabled.clear()
+        elif old == 0 and new > 0:
+            user_ai_enabled.clear()
+        load_button_texts()
+        return f"✅ AI providers: {old}→{new}"
+
+    elif cmd == "refresh_data":
+        invalidate_sheet_cache()
+        get_data()  # يبني الـ cache فوراً
+        return "✅ بيانات الشيت محدّثة"
+
+    elif cmd == "refresh_all":
+        load_bot_texts()
+        load_button_texts()
+        invalidate_users_cache()
+        refresh_log_users()
+        user_lang.clear()
+        user_auto_publish.clear()
+        old = len(AI_PROVIDERS)
+        load_ai_providers()
+        new = len(AI_PROVIDERS)
+        if not AI_PROVIDERS:
+            user_ai_enabled.clear()
+        elif old == 0 and new > 0:
+            user_ai_enabled.clear()
+        invalidate_sheet_cache()
+        threading.Thread(target=_check_bot_texts, daemon=True).start()
+        return f"✅ تحديث كامل — AI: {old}→{new}, نصوص: {len(BOT_TEXTS)}"
+
+    elif cmd == "status":
+        import time as _time
+        now = _time.time()
+        users_age = int(now - _users_cache["ts"]) if _users_cache["ts"] else -1
+        data_age  = int(now - _sheet_data_cache["ts"]) if _sheet_data_cache["ts"] else -1
+        return (
+            f"📊 حالة البوت\n"
+            f"🤖 AI providers: {len(AI_PROVIDERS)}\n"
+            f"👥 cache المستخدمين: {'محدّث' if _users_cache['data'] else 'فارغ'} ({users_age}ث)\n"
+            f"📋 cache البيانات: {'محدّث' if _sheet_data_cache['data'] else 'فارغ'} ({data_age}ث)\n"
+            f"📝 نصوص: {len(BOT_TEXTS)} مفتاح\n"
+            f"👁 مستخدمو اللوج: {len(_log_users_cache)}"
+        )
+    else:
+        return f"❌ أمر غير معروف: {cmd}"
+
+def _run_internal_server():
+    try:
+        server = HTTPServer(("0.0.0.0", INTERNAL_PORT), _InternalHandler)
+        logger.info(f"✅ Internal endpoint على port {INTERNAL_PORT}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Internal server error: {e}")
 
 def send_typing_animation(chat_id, uid, duration=2):
     base_text = bt("رسالة_نايف_يكتب", uid)
@@ -3783,30 +3910,6 @@ def ai_command(message):
         bt("رسالة_ai_ترحيب", uid).format(model=f"{default_model['icon']} {default_model['name']}"),
         parse_mode="Markdown"
     )
-
-@bot.message_handler(commands=['refresh'])
-def refresh_command(message):
-    uid = message.from_user.id
-    invalidate_users_cache()
-    invalidate_sheet_cache()
-    allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
-    _admin = admin_all or uid in admins
-    _owner = uid in owners
-    msg = bot.send_message(message.chat.id, "🔄 جاري التجديد...")
-    if _owner:
-        n = _do_full_refresh()
-        bot.edit_message_text(
-            f"✅ تم تحديث البيانات!\n"
-            f"🤖 مزودي AI النشطين: {n}\n"
-            f"🔄 cache المستخدمين والبيانات أُبطل.",
-            message.chat.id, msg.message_id)
-    else:
-        # يحدّث النصوص والأزرار للجميع
-        load_bot_texts()
-        load_button_texts()
-        invalidate_users_cache()
-        invalidate_sheet_cache()
-        bot.edit_message_text("✅ تم تجديد البيانات", message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['ai_reset'])
 def ai_reset_command(message):
@@ -4056,8 +4159,12 @@ def handle_file(message):
 def handle_message(message):
     uid = message.from_user.id
     load_user_lang(uid)
-    load_user_ai_switch(uid)
-    load_user_auto_publish(uid)   # تحميل حالة النشر التلقائي من الشيت
+    # ── شرط AI مبكر: لا نحمّل السويتش إذا لا providers ──
+    if AI_PROVIDERS:
+        load_user_ai_switch(uid)
+    else:
+        user_ai_enabled[uid] = False
+    load_user_auto_publish(uid)
     welcome, rejection = get_settings()
     allowed, admins, owners, open_all, admin_all, _, _, _ = get_users()
     is_allowed = open_all or uid in allowed
@@ -6288,26 +6395,12 @@ def _do_full_refresh():
     return new_count
 
 def _sheet_cache_loop():
-    """يحدّث الـ cache كل دقيقة تلقائياً"""
+    """يحدّث cache البيانات (محاضرات، تكاليف...) كل 60 ثانية تلقائياً فقط.
+    المستخدمون والـ AI والنصوص لا تتحدث تلقائياً — يدوي فقط من بوت اللوج."""
     while True:
         time.sleep(60)
         try:
-            invalidate_users_cache()
             invalidate_sheet_cache()
-            # إعادة تحميل AI providers للتحقق من التغييرات
-            old_count = len(AI_PROVIDERS)
-            load_ai_providers()
-            new_count = len(AI_PROVIDERS)
-            if old_count != new_count:
-                load_button_texts()
-                # auto-disable إذا صفر
-                if not AI_PROVIDERS:
-                    # نمسح الذاكرة فقط — الشيت يبقى محفوظ للعودة
-                    user_ai_enabled.clear()
-                # auto-enable إذا عاد → امسح الذاكرة، يُعاد تحميل كل مستخدم من الشيت
-                elif old_count == 0:
-                    user_ai_enabled.clear()
-                log_info(f"🔄 auto-refresh: AI providers {old_count}→{new_count}")
         except:
             pass
 
@@ -6315,6 +6408,7 @@ def run():
     load_bot_texts()
     load_button_texts()
     load_ai_providers()
+    _load_log_users()           # تحميل مستخدمي اللوج مرة واحدة عند التشغيل
     set_bot_commands()
     if not AI_PROVIDERS:
         log_warning("⚠️ لا يوجد مزود AI نشط. لن يعمل المساعد الذكي.")
@@ -6322,6 +6416,7 @@ def run():
         log_info(f"✅ تم تحميل {len(AI_PROVIDERS)} مزود AI.")
     threading.Thread(target=_watch_sheet_loop, daemon=True).start()
     threading.Thread(target=_sheet_cache_loop, daemon=True).start()
+    threading.Thread(target=_run_internal_server, daemon=True).start()
     log_info("بوت الدراسة يعمل ✅")
     bot.infinity_polling()
 
