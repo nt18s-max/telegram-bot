@@ -237,25 +237,142 @@ BUTTON_STYLES: dict[str, str] = {}
 _VALID_STYLES = {"danger", "success", "primary"}
 
 def load_bot_texts():
-    global BOT_TEXTS, BUTTON_STYLES
+    """
+    يقرأ bot_texts من الشيت:
+      A = المفتاح
+      B = عربي
+      C = إنجليزي
+      D = لون (danger/success/primary)
+      E = موضع المستخدم  (مثل A1، B2 — فارغ = مخفي)
+      F = موضع الأدمن
+      G = موضع المالك
+    """
+    global BOT_TEXTS, BUTTON_STYLES, BUTTON_POSITIONS, _keyboards_cache, _allowed_texts_cache
     try:
         rows = bot_texts_sheet.get_all_values()
-        styles = {}
+        styles    = {}
+        positions = {}   # {key: {"user": "A1", "admin": "B2", "owner": "A1"}}
+
         for row in rows:
-            if len(row) >= 2 and row[0].strip():
-                key = row[0].strip()
-                ar_text = row[1].strip() if len(row) > 1 else ""
-                en_text = row[2].strip() if len(row) > 2 else ""
-                # عمود D — لون الزر (اختياري)
-                style = row[3].strip().lower() if len(row) > 3 else ""
-                BOT_TEXTS[f"{key}_ar"] = ar_text if ar_text else DEFAULT_BOT_TEXTS.get(f"{key}_ar", key)
-                BOT_TEXTS[f"{key}_en"] = en_text if en_text else DEFAULT_BOT_TEXTS.get(f"{key}_en", key)
-                if style in _VALID_STYLES:
-                    styles[key] = style
-        BUTTON_STYLES = styles
-        logger.info(f"✅ bot_texts loaded with bilingual support ({len(styles)} أزرار ملوّنة)")
+            if not row or not row[0].strip():
+                continue
+            key     = row[0].strip()
+            ar_text = row[1].strip() if len(row) > 1 else ""
+            en_text = row[2].strip() if len(row) > 2 else ""
+            style   = row[3].strip().lower() if len(row) > 3 else ""
+            pos_u   = row[4].strip().upper() if len(row) > 4 else ""
+            pos_a   = row[5].strip().upper() if len(row) > 5 else ""
+            pos_o   = row[6].strip().upper() if len(row) > 6 else ""
+
+            BOT_TEXTS[f"{key}_ar"] = ar_text or DEFAULT_BOT_TEXTS.get(f"{key}_ar", key)
+            BOT_TEXTS[f"{key}_en"] = en_text or DEFAULT_BOT_TEXTS.get(f"{key}_en", key)
+
+            if style in _VALID_STYLES:
+                styles[key] = style
+
+            if pos_u or pos_a or pos_o:
+                positions[key] = {"user": pos_u, "admin": pos_a, "owner": pos_o}
+
+        BUTTON_STYLES    = styles
+        BUTTON_POSITIONS = positions
+
+        # بناء الكيبوردات والنصوص المسموحة مرة واحدة في الذاكرة
+        _build_keyboards_cache()
+
+        n_pos = sum(1 for p in positions.values() if any(p.values()))
+        logger.info(f"✅ bot_texts: {len(styles)} ألوان، {n_pos} أزرار لها مواضع")
     except Exception as e:
         logger.warning(f"bot_texts error: {e}")
+
+# ─── Cache الكيبوردات والنصوص المسموحة ───────────────
+# يُبنى مرة عند load_bot_texts — لا يُعاد إلا بـ refresh_texts من بوت اللوج
+BUTTON_POSITIONS: dict = {}   # {key: {"user": "A1", "admin": "", "owner": "A1"}}
+_keyboards_cache: dict  = {}  # {"user": markup, "admin": markup, "owner": markup}
+_allowed_texts_cache: dict = {}  # {"user": set(), "admin": set(), "owner": set()}
+
+def _parse_pos(pos: str):
+    """
+    يحوّل 'A1' → (col=0, row=0) — العمود حرف، الصف رقم.
+    A=0, B=1, C=2, ...
+    الصف يبدأ من 1 في الشيت → نطرح 1 للـ index.
+    """
+    pos = pos.strip().upper()
+    if not pos or len(pos) < 2:
+        return None
+    col_char = pos[0]
+    row_str  = pos[1:]
+    if not row_str.isdigit():
+        return None
+    col = ord(col_char) - ord('A')   # A=0, B=1...
+    row = int(row_str) - 1           # 1→0, 2→1...
+    return (row, col)
+
+def _build_keyboards_cache():
+    """
+    يبني كيبورد لكل فئة من BUTTON_POSITIONS ويخزنه في _keyboards_cache.
+    يبني أيضاً _allowed_texts_cache لكل فئة.
+    يُستدعى فقط من load_bot_texts — لا تستدعه مباشرة.
+    """
+    global _keyboards_cache, _allowed_texts_cache
+
+    roles = ["user", "admin", "owner"]
+    # grid: {role: {(row,col): key}}
+    grids = {r: {} for r in roles}
+
+    for key, pos_dict in BUTTON_POSITIONS.items():
+        for role in roles:
+            pos = pos_dict.get(role, "")
+            if not pos:
+                continue
+            parsed = _parse_pos(pos)
+            if parsed is None:
+                continue
+            grids[role][parsed] = key
+
+    new_kbs      = {}
+    new_allowed  = {}
+
+    for role in roles:
+        grid = grids[role]
+        if not grid:
+            new_kbs[role]     = None
+            new_allowed[role] = set()
+            continue
+
+        # ترتيب: صف تصاعدي، ثم عمود تصاعدي
+        sorted_keys = sorted(grid.items(), key=lambda x: (x[0][0], x[0][1]))
+
+        # تجميع حسب الصف
+        rows_dict: dict = {}
+        for (r, c), key in sorted_keys:
+            rows_dict.setdefault(r, []).append((c, key))
+
+        m = telebot.types.ReplyKeyboardMarkup(row_width=4, resize_keyboard=True)
+        allowed = set()
+
+        for r in sorted(rows_dict.keys()):
+            row_btns = sorted(rows_dict[r], key=lambda x: x[0])
+            buttons  = []
+            for _, key in row_btns:
+                btn_text = BOT_TEXTS.get(f"{key}_ar", key)
+                allowed.add(btn_text)
+                style = BUTTON_STYLES.get(key, "")
+                if style in _VALID_STYLES:
+                    try:
+                        buttons.append(telebot.types.KeyboardButton(btn_text, style=style))
+                    except:
+                        buttons.append(telebot.types.KeyboardButton(btn_text))
+                else:
+                    buttons.append(telebot.types.KeyboardButton(btn_text))
+            if buttons:
+                m.row(*buttons)
+
+        new_kbs[role]     = m
+        new_allowed[role] = allowed
+
+    _keyboards_cache     = new_kbs
+    _allowed_texts_cache = new_allowed
+    logger.info("✅ keyboards cache built")
 
 def bt(key, uid=None):
     lang = "ar"
@@ -1792,8 +1909,16 @@ def _get_button_description(key):
 BUTTON_TEXTS = set()
 
 def load_button_texts():
+    """
+    يبني BUTTON_TEXTS — مجموع كل النصوص المسموحة من:
+    1. الأزرار الثابتة في الكود
+    2. الأزرار من الشيت (_allowed_texts_cache)
+    يُستدعى بعد load_bot_texts دائماً.
+    """
     global BUTTON_TEXTS
     BUTTON_TEXTS = set()
+
+    # ── الأزرار الثابتة في الكود ──
     button_keys = [
         "زر_المواد", "زر_التاريخ", "زر_التكاليف", "زر_الجدول", "زر_التنبيهات",
         "زر_الاسعار", "زر_الملخصات", "زر_طلب_رفع", "زر_رفع_ملف", "زر_رفع_تعليمات", "زر_الملازم",
@@ -1805,6 +1930,12 @@ def load_button_texts():
     ]
     for key in button_keys:
         BUTTON_TEXTS.add(bt(key))
+
+    # ── أزرار من الشيت (كل الفئات) ──
+    for role_texts in _allowed_texts_cache.values():
+        BUTTON_TEXTS.update(role_texts)
+
+    # ── نصوص ثابتة داخلية ──
     BUTTON_TEXTS.update([
         "↩️ رجوع خطوة",
         "🤖 مساعد نايف", "🟢 🤖 مساعد نايف", "🔴 🤖 مساعد نايف",
@@ -1818,30 +1949,45 @@ def load_button_texts():
     ])
 
 def main_menu(uid, admin=False, owner=False):
-    m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    if admin or owner:
-        m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
-        m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid))
-        m.row(bt("زر_الاسعار", uid), bt("زر_الملخصات", uid), bt("زر_التنبيهات", uid))
-        m.row(bt("زر_الملازم", uid))
-        m.row(bt("زر_تعديل", uid), bt("زر_اضافة", uid))
-        m.row(bt("زر_اشعار", uid), bt("زر_رفع_ملف", uid), bt("زر_رفع_تعليمات", uid))
-        if owner:
-            m.add(bt("زر_المستخدمين", uid))
+    # ── حدد الفئة ──
+    if owner:
+        role = "owner"
+    elif admin:
+        role = "admin"
     else:
-        m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
-        m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid), bt("زر_الملخصات", uid))
-        m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
-        m.row(bt("زر_الملازم", uid))
+        role = "user"
 
-    row_switches = []
-    if AI_PROVIDERS:  # يوجد مزود AI نشط → أظهر أزرار السويتش
+    # ── إذا في cache من الشيت → استخدمه مباشرة ──
+    cached = _keyboards_cache.get(role)
+    if cached is not None:
+        m = cached
+    else:
+        # ── الافتراضي الكودي — يعمل لو الشيت فارغ ──
+        m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        if admin or owner:
+            m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
+            m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid))
+            m.row(bt("زر_الاسعار", uid), bt("زر_الملخصات", uid), bt("زر_التنبيهات", uid))
+            m.row(bt("زر_الملازم", uid))
+            m.row(bt("زر_تعديل", uid), bt("زر_اضافة", uid))
+            m.row(bt("زر_اشعار", uid), bt("زر_رفع_ملف", uid), bt("زر_رفع_تعليمات", uid))
+            if owner:
+                m.add(bt("زر_المستخدمين", uid))
+        else:
+            m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
+            m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid), bt("زر_الملخصات", uid))
+            m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
+            m.row(bt("زر_الملازم", uid))
+
+    # ── أزرار AI/النشر — تُضاف دائماً في آخر صف (ديناميكية) ──
+    if AI_PROVIDERS:
         load_user_auto_publish(uid)
         pub_status = "📢" if user_auto_publish.get(uid, False) else "🔕"
-        row_switches.append(f"{pub_status} {bt('زر_نشر_تلقائي', uid)}")
-        ai_status = "🟢" if user_ai_enabled.get(uid, False) else "🔴"
-        row_switches.append(f"{ai_status} 🤖 {bt('زر_مساعد_نايف', uid)}")
-    if row_switches:
+        ai_status  = "🟢" if user_ai_enabled.get(uid, False) else "🔴"
+        row_switches = [
+            f"{pub_status} {bt('زر_نشر_تلقائي', uid)}",
+            f"{ai_status} 🤖 {bt('زر_مساعد_نايف', uid)}",
+        ]
         m.row(*row_switches)
 
     return m
@@ -3615,9 +3761,9 @@ class _InternalHandler(BaseHTTPRequestHandler):
 def _handle_internal_cmd(cmd: str) -> str:
     """ينفّذ أمر من بوت اللوج ويرجع رسالة النتيجة"""
     if cmd == "refresh_texts":
-        load_bot_texts()
-        load_button_texts()
-        return f"✅ نصوص محدّثة — {len(BOT_TEXTS)} مفتاح"
+        load_bot_texts()      # يبني _keyboards_cache و _allowed_texts_cache داخلياً
+        load_button_texts()   # يحدّث BUTTON_TEXTS
+        return f"✅ نصوص وكيبوردات محدّثة — {len(BOT_TEXTS)} مفتاح، {len(BUTTON_POSITIONS)} زر له موضع"
 
     elif cmd == "refresh_users":
         invalidate_users_cache()
