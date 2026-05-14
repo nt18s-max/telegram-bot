@@ -40,6 +40,13 @@ if __name__ == "__main__":
         daemon=True
     ).start()
 
+    # log_bot — يشتغل فقط إذا STUDY_BOT_LOG_TOKEN موجود
+    threading.Thread(
+        target=run_bot_subprocess,
+        args=("log_bot.py", "STUDY_BOT_LOG_TOKEN"),
+        daemon=True
+    ).start()
+
     print("✅ جميع البوتات تم تشغيلها")
 
     # Flask يشتغل على PORT الرئيسي — آخر شيء في الكود
