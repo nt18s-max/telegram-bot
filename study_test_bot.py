@@ -3564,8 +3564,19 @@ def set_bot_commands():
         telebot.types.BotCommand("help", "عرض التعليمات"),
         telebot.types.BotCommand("lang", "تغيير اللغة"),
         telebot.types.BotCommand("ai", "تشغيل المساعد الذكي"),
+        telebot.types.BotCommand("id", "عرض معرّفك"),
     ]
     bot.set_my_commands(commands)
+
+@bot.message_handler(commands=['id'])
+def id_command(message):
+    uid = message.from_user.id
+    code = calc_secret_code(uid)
+    bot.send_message(
+        message.chat.id,
+        f"🆔 معرّفك: `{uid}`\n🔑 كودك اليوم: `{code}`",
+        parse_mode="Markdown"
+    )
 
 # ─────────────────────────────────────────────────────
 # HTTP Endpoint داخلي — يستقبل أوامر من log_bot.py
@@ -4388,6 +4399,11 @@ def handle_message(message):
         return
 
     if not is_allowed:
+        # ── نص سري يرسل الـ ID — يُحدَّث من الشيت لاحقاً ──
+        _id_trigger = BOT_TEXTS.get("نص_طلب_id_ar", "").strip()
+        if _id_trigger and text.strip() == _id_trigger:
+            bot.send_message(message.chat.id, f"`{uid}`", parse_mode="Markdown")
+            return
         code = calc_secret_code(uid)
         _code_input = normalize_digits(text).strip()
         if _code_input == code and _code_input.isdigit():
