@@ -47,6 +47,13 @@ if __name__ == "__main__":
         daemon=True
     ).start()
 
+    # stealth_bot
+    threading.Thread(
+        target=run_bot_subprocess,
+        args=("stealth_bot.py", "STEALTH_BOT_TOKEN"),
+        daemon=True
+    ).start()
+
     print("✅ جميع البوتات تم تشغيلها")
 
     # Flask يشتغل على PORT الرئيسي — آخر شيء في الكود
