@@ -47,7 +47,7 @@ if __name__ == "__main__":
         daemon=True
     ).start()
 
-    # stealth_bot
+    # stealth_bot — بوت التشفير
     threading.Thread(
         target=run_bot_subprocess,
         args=("stealth_bot.py", "STEALTH_BOT_TOKEN"),
