@@ -65,6 +65,26 @@ DEFAULT_TEXTS = {
     ),
 }
 
+# ── ربط مفاتيح أزرار لوحة التحكم بالشيت بمفاتيحها الداخلية ─
+# مفتاح الشيت (keyboard_buttons) → مفتاح داخلي يُستخدم بـ admin_keyboard()
+BUTTON_KEY_MAP = {
+    "زر_تواصل_رد":       "btn_reply",
+    "زر_تواصل_حظر":      "btn_block",
+    "زر_تواصل_فك_حظر":   "btn_unblock",
+    "زر_تواصل_احصائيات": "btn_stats",
+    "زر_تواصل_غياب":     "btn_away",
+    "زر_تواصل_رجوع":     "btn_back",
+}
+# نص احتياطي إذا الشيت فاضي أو فشل الاتصال
+DEFAULT_BUTTON_LABELS = {
+    "btn_reply":   "↩️ /reply",
+    "btn_block":   "🚫 /block",
+    "btn_unblock": "✅ /unblock",
+    "btn_stats":   "📊 /stats",
+    "btn_away":    "🌙 /away",
+    "btn_back":    "☀️ /back",
+}
+
 # ── نصوص ثنائية اللغة (ar/en) ─────────────────────────
 # يُملأ من load_texts()، المفتاح = اسم النص، القيمة = {"ar": ..., "en": ...}
 TEXTS_BILINGUAL: dict[str, dict] = {}
@@ -107,13 +127,13 @@ def tx(key: str, uid: int = None, **fmt) -> str:
 # ── تحميل النصوص من الشيت ─────────────────────────────
 def load_texts() -> None:
     """
-    يقرأ من صفحة bot_texts:
-      العمود A = المفتاح
-      العمود B = النص العربي
-      العمود C = النص الإنجليزي (اختياري)
-      العمود D = لون الزر (danger/success/primary/فارغ)
+    يقرأ من صفحتين:
+      bot_texts:        المفتاح | عربي | إنجليزي                              (نصوص الرسائل)
+      keyboard_buttons:  المفتاح | عربي | إنجليزي | لون | مواضع...              (أزرار لوحة التحكم)
 
     يملأ TEXTS_BILINGUAL و TEXTS و BUTTON_STYLES.
+    BUTTON_KEY_MAP يربط مفاتيح أزرار الشيت (زر_تواصل_*) بمفاتيح الأزرار الداخلية
+    (btn_reply, btn_block...) المستخدمة بـ admin_keyboard().
     """
     global TEXTS_BILINGUAL, TEXTS, BUTTON_STYLES
     try:
@@ -123,36 +143,48 @@ def load_texts() -> None:
             json.loads(creds_json),
             scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"],
         )
-        ws   = gspread.authorize(creds).open_by_key(sheet_key).worksheet("bot_texts")
-        rows = ws.get_all_values()
+        gc = gspread.authorize(creds)
+        spreadsheet = gc.open_by_key(sheet_key)
+        ws_texts = spreadsheet.worksheet("bot_texts")
+        ws_kb    = spreadsheet.worksheet("keyboard_buttons")
 
         bilingual = {}
         mono      = {}
         styles    = {}
 
-        for row in rows:
-            # نتجاهل صفوف الهيدر أو الفارغة
+        # 1) نصوص الرسائل العادية (bot_texts) — فقط المفاتيح المعروفة لبوت التواصل
+        for row in ws_texts.get_all_values():
             if not row or not row[0].strip():
                 continue
             key    = row[0].strip()
             ar_val = row[1].strip() if len(row) > 1 else ""
             en_val = row[2].strip() if len(row) > 2 else ""
-            # عمود D — لون الزر (اختياري)
-            style  = row[3].strip().lower() if len(row) > 3 else ""
-
-            # نخزّن فقط المفاتيح المعروفة لبوت التواصل
             if key not in DEFAULT_TEXTS:
                 continue
-
             bilingual[key] = {
                 "ar": ar_val or DEFAULT_TEXTS.get(key, ""),
                 "en": en_val or ar_val or DEFAULT_TEXTS.get(key, ""),
             }
-            # TEXTS الأحادي → العربي (للتوافق مع الكود القديم)
             mono[key] = ar_val or DEFAULT_TEXTS.get(key, "")
-            # حفظ اللون فقط إذا كان صالحاً
+
+        # 2) أزرار لوحة التحكم (keyboard_buttons) — مفاتيح زر_تواصل_* مربوطة بمفاتيح الأزرار الداخلية
+        for row in ws_kb.get_all_values():
+            if not row or not row[0].strip():
+                continue
+            sheet_key_name = row[0].strip()
+            internal_key   = BUTTON_KEY_MAP.get(sheet_key_name)
+            if not internal_key:
+                continue  # مفتاح لا يخص بوت التواصل
+            ar_val = row[1].strip() if len(row) > 1 else ""
+            en_val = row[2].strip() if len(row) > 2 else ""
+            style  = row[3].strip().lower() if len(row) > 3 else ""
+            bilingual[internal_key] = {
+                "ar": ar_val or DEFAULT_BUTTON_LABELS.get(internal_key, ""),
+                "en": en_val or ar_val or DEFAULT_BUTTON_LABELS.get(internal_key, ""),
+            }
+            mono[internal_key] = ar_val or DEFAULT_BUTTON_LABELS.get(internal_key, "")
             if style in _VALID_STYLES:
-                styles[key] = style
+                styles[internal_key] = style
 
         # أي مفتاح غير موجود في الشيت → القيمة الافتراضية
         for k, v in DEFAULT_TEXTS.items():
@@ -164,7 +196,7 @@ def load_texts() -> None:
         TEXTS_BILINGUAL = bilingual
         TEXTS           = mono
         BUTTON_STYLES   = styles
-        print(f"✅ نصوص بوت التواصل تحملت من bot_texts ({len(bilingual)} مفتاح، {len(styles)} زر ملوّن)")
+        print(f"✅ نصوص بوت التواصل تحملت ({len(bilingual)} مفتاح، {len(styles)} زر ملوّن)")
 
     except Exception as e:
         print(f"⚠️ خطأ في تحميل نصوص بوت التواصل: {e} — سيتم استخدام الافتراضي")
@@ -221,8 +253,9 @@ def now_str() -> str:
 def is_admin(update: Update) -> bool:
     return update.message.chat_id in get_contact_bot_admins()
 
-def _make_button(text_key: str, label: str) -> KeyboardButton:
-    """ينشئ KeyboardButton مع لون من الشيت إذا وُجد."""
+def _make_button(text_key: str) -> KeyboardButton:
+    """ينشئ KeyboardButton بنص ولون من الشيت (مفاتيح btn_* الداخلية)."""
+    label = TEXTS.get(text_key) or DEFAULT_BUTTON_LABELS.get(text_key, text_key)
     style = BUTTON_STYLES.get(text_key, "")
     if style in _VALID_STYLES:
         return KeyboardButton(label, style=style)
@@ -230,12 +263,9 @@ def _make_button(text_key: str, label: str) -> KeyboardButton:
 
 def admin_keyboard():
     return ReplyKeyboardMarkup([
-        [_make_button("reply_sent",      "↩️ /reply"),
-         _make_button("block_success",   "🚫 /block")],
-        [_make_button("unblock_success", "✅ /unblock"),
-         _make_button("stats_text",      "📊 /stats")],
-        [_make_button("away_on",         "🌙 /away"),
-         _make_button("away_off",        "☀️ /back")],
+        [_make_button("btn_reply"),   _make_button("btn_block")],
+        [_make_button("btn_unblock"), _make_button("btn_stats")],
+        [_make_button("btn_away"),    _make_button("btn_back")],
     ], resize_keyboard=True)
 
 # ── Handlers ──────────────────────────────────────────

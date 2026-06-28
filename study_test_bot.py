@@ -54,6 +54,8 @@ try:
     users_sheet = spreadsheet.worksheet("المستخدمين")
     help_sheet = spreadsheet.worksheet("المساعدة")
     bot_texts_sheet = spreadsheet.worksheet("bot_texts")
+    keyboard_buttons_sheet = spreadsheet.worksheet("keyboard_buttons")
+    inline_buttons_sheet = spreadsheet.worksheet("inline_buttons")
     try:
         # يحاول الاسم الجديد أولاً ثم القديم للتوافق
         try:
@@ -65,6 +67,7 @@ try:
 except Exception as _e:
     logger.critical(f"خطأ Google Sheets: {_e}")
     sheet = users_sheet = help_sheet = bot_texts_sheet = rooms_sheet = None
+    keyboard_buttons_sheet = inline_buttons_sheet = None
 
 # ─────────────────────────────────────────────────────
 # BOT_TEXTS (دعم اللغتين)
@@ -176,10 +179,6 @@ DEFAULT_BOT_TEXTS = {
     "رسالة_تم_التعديل_en": "",
     "رسالة_ادمن_فقط_ar": "",
     "رسالة_ادمن_فقط_en": "",
-    "زر_مساعد_نايف_ar": "",
-    "زر_مساعد_نايف_en": "",
-    "زر_نشر_تلقائي_ar": "",
-    "زر_نشر_تلقائي_en": "",
     "رسالة_نايف_يكتب_ar": "",
     "رسالة_نايف_يكتب_en": "",
     "رسالة_ai_غير_مفعل_ar": "",
@@ -228,6 +227,28 @@ DEFAULT_BOT_TEXTS = {
     "رابط_بوت_تواصل_en": "",
     "رسالة_جاري_الحذف_ar": "",
     "رسالة_جاري_الحذف_en": "",
+    # ── أزرار Inline الجديدة (قيم احتياطية إذا تعطّل الشيت) ──
+    "زر_sched_accept_ar": "✅ قبول وإضافة", "زر_sched_accept_en": "✅ Accept & Add",
+    "زر_sched_edit_ar": "✏️ تعديل", "زر_sched_edit_en": "✏️ Edit",
+    "زر_sched_cancel_ar": "❌ إلغاء", "زر_sched_cancel_en": "❌ Cancel",
+    "زر_confirm_multi_ar": "✅ إرسال", "زر_confirm_multi_en": "✅ Send",
+    "زر_edit_multi_ar": "✏️ تعديل", "زر_edit_multi_en": "✏️ Edit",
+    "زر_reject_multi_ar": "❌ رفض", "زر_reject_multi_en": "❌ Reject",
+    "زر_approve_admin_ar": "⭐ أدمن", "زر_approve_admin_en": "⭐ Admin",
+    "زر_approve_user_ar": "👤 مستخدم", "زر_approve_user_en": "👤 User",
+    "زر_approve_rename_ar": "✏️ تغيير الاسم", "زر_approve_rename_en": "✏️ Rename",
+    "زر_approve_ai_ar": "🤖 تفعيل AI", "زر_approve_ai_en": "🤖 Enable AI",
+    "زر_reject_ar": "❌ رفض", "زر_reject_en": "❌ Reject",
+    "زر_file_approve_ar": "✅ قبول", "زر_file_approve_en": "✅ Approve",
+    "زر_file_reject_ar": "❌ رفض", "زر_file_reject_en": "❌ Reject",
+    "زر_ai_request_yes_ar": "✅ نعم", "زر_ai_request_yes_en": "✅ Yes",
+    "زر_ai_request_no_ar": "❌ لا", "زر_ai_request_no_en": "❌ No",
+    "زر_grant_ai_ar": "✅ منح الصلاحية", "زر_grant_ai_en": "✅ Grant Access",
+    "زر_deny_ai_ar": "❌ رفض", "زر_deny_ai_en": "❌ Reject",
+    "زر_مساعد_نايف_تفعيل_ar": "🟢 🤖 مساعد نايف", "زر_مساعد_نايف_تفعيل_en": "🟢 🤖 Naif Assistant",
+    "زر_مساعد_نايف_تعطيل_ar": "🔴 🤖 مساعد نايف", "زر_مساعد_نايف_تعطيل_en": "🔴 🤖 Naif Assistant",
+    "زر_نشر_تلقائي_تفعيل_ar": "📢 النشر التلقائي", "زر_نشر_تلقائي_تفعيل_en": "📢 Auto Publish",
+    "زر_نشر_تلقائي_تعطيل_ar": "🔕 النشر التلقائي", "زر_نشر_تلقائي_تعطيل_en": "🔕 Auto Publish",
 }
 BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 
@@ -236,53 +257,107 @@ BOT_TEXTS = dict(DEFAULT_BOT_TEXTS)
 BUTTON_STYLES: dict[str, str] = {}
 _VALID_STYLES = {"danger", "success", "primary"}
 
+def _read_bot_texts_sheet():
+    """يقرأ صفحة bot_texts: مفتاح | عربي | إنجليزي (بدون لون أو مواضع)."""
+    bilingual = {}
+    try:
+        rows = bot_texts_sheet.get_all_values()
+    except Exception as e:
+        logger.warning(f"bot_texts sheet error: {e}")
+        return bilingual
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        key     = row[0].strip()
+        ar_text = row[1].strip() if len(row) > 1 else ""
+        en_text = row[2].strip() if len(row) > 2 else ""
+        if not ar_text and not en_text:
+            continue  # صف عنوان قسم أو ملاحظة، لا قيمة فعلية
+        bilingual[key] = (ar_text, en_text)
+    return bilingual
+
+def _read_buttons_sheet(ws, with_positions=True):
+    """
+    يقرأ صفحة أزرار (keyboard_buttons أو inline_buttons):
+      A=مفتاح B=عربي C=إنجليزي D=لون E=موضع_مستخدم F=موضع_أدمن G=موضع_مالك
+    يرجع: (bilingual, styles, positions)
+    """
+    bilingual = {}
+    styles    = {}
+    positions = {}
+    try:
+        rows = ws.get_all_values()
+    except Exception as e:
+        logger.warning(f"buttons sheet error: {e}")
+        return bilingual, styles, positions
+    for row in rows:
+        if not row or not row[0].strip():
+            continue
+        key     = row[0].strip()
+        ar_text = row[1].strip() if len(row) > 1 else ""
+        en_text = row[2].strip() if len(row) > 2 else ""
+        if not ar_text and not en_text:
+            continue  # صف عنوان قسم أو ملاحظة
+        style   = row[3].strip().lower() if len(row) > 3 else ""
+        bilingual[key] = (ar_text, en_text)
+        if style in _VALID_STYLES:
+            styles[key] = style
+        if with_positions:
+            pos_u = row[4].strip().upper() if len(row) > 4 else ""
+            pos_a = row[5].strip().upper() if len(row) > 5 else ""
+            pos_o = row[6].strip().upper() if len(row) > 6 else ""
+            if pos_u or pos_a or pos_o:
+                positions[key] = {"user": pos_u, "admin": pos_a, "owner": pos_o}
+    return bilingual, styles, positions
+
 def load_bot_texts():
     """
-    يقرأ bot_texts من الشيت:
-      A = المفتاح
-      B = عربي
-      C = إنجليزي
-      D = لون (danger/success/primary)
-      E = موضع المستخدم  (مثل A1، B2 — فارغ = مخفي)
-      F = موضع الأدمن
-      G = موضع المالك
+    يقرأ كل نصوص وأزرار البوت من 3 صفحات منفصلة:
+      - bot_texts:        مفتاح | عربي | إنجليزي                              (نصوص عادية، بدون لون/مواضع)
+      - keyboard_buttons:  مفتاح | عربي | إنجليزي | لون | موضع_م | موضع_أ | موضع_و  (أزرار الكيبورد)
+      - inline_buttons:    مفتاح | عربي | إنجليزي | لون | موضع_م | موضع_أ | موضع_و  (أزرار Inline)
+
+    المواضع (E/F/G) تُستخدم فعلياً فقط من keyboard_buttons لبناء كيبورد القائمة الرئيسية.
+    مواضع inline_buttons تُقرأ احتياطاً لكنها غير مستخدمة حالياً (الأزرار inline ترتيبها ثابت بالكود).
     """
     global BOT_TEXTS, BUTTON_STYLES, BUTTON_POSITIONS, _keyboards_cache, _allowed_texts_cache
     try:
-        rows = bot_texts_sheet.get_all_values()
-        styles    = {}
-        positions = {}   # {key: {"user": "A1", "admin": "B2", "owner": "A1"}}
+        merged_bilingual = {}
+        merged_styles    = {}
 
-        for row in rows:
-            if not row or not row[0].strip():
-                continue
-            key     = row[0].strip()
-            ar_text = row[1].strip() if len(row) > 1 else ""
-            en_text = row[2].strip() if len(row) > 2 else ""
-            style   = row[3].strip().lower() if len(row) > 3 else ""
-            pos_u   = row[4].strip().upper() if len(row) > 4 else ""
-            pos_a   = row[5].strip().upper() if len(row) > 5 else ""
-            pos_o   = row[6].strip().upper() if len(row) > 6 else ""
+        # 1) نصوص عادية
+        txt_bilingual = _read_bot_texts_sheet()
+        merged_bilingual.update(txt_bilingual)
 
+        # 2) أزرار الكيبورد (لها مواضع فعلية تُستخدم بالقائمة الرئيسية)
+        kb_bilingual, kb_styles, kb_positions = _read_buttons_sheet(keyboard_buttons_sheet, with_positions=True)
+        merged_bilingual.update(kb_bilingual)
+        merged_styles.update(kb_styles)
+
+        # 3) أزرار Inline (لها لون، مواضعها تُقرأ احتياطاً وغير مستخدمة حالياً)
+        inl_bilingual, inl_styles, _inl_positions = _read_buttons_sheet(inline_buttons_sheet, with_positions=True)
+        merged_bilingual.update(inl_bilingual)
+        merged_styles.update(inl_styles)
+
+        # بناء BOT_TEXTS النهائي (مفتاح_ar / مفتاح_en) من كل المصادر مجتمعة
+        for key, (ar_text, en_text) in merged_bilingual.items():
             BOT_TEXTS[f"{key}_ar"] = ar_text or DEFAULT_BOT_TEXTS.get(f"{key}_ar", key)
             BOT_TEXTS[f"{key}_en"] = en_text or DEFAULT_BOT_TEXTS.get(f"{key}_en", key)
 
-            if style in _VALID_STYLES:
-                styles[key] = style
-
-            if pos_u or pos_a or pos_o:
-                positions[key] = {"user": pos_u, "admin": pos_a, "owner": pos_o}
-
-        BUTTON_STYLES    = styles
-        BUTTON_POSITIONS = positions
+        BUTTON_STYLES    = merged_styles
+        BUTTON_POSITIONS = kb_positions   # فقط مواضع الكيبورد تُستخدم لبناء القائمة الرئيسية
 
         # بناء الكيبوردات والنصوص المسموحة مرة واحدة في الذاكرة
         _build_keyboards_cache()
 
-        n_pos = sum(1 for p in positions.values() if any(p.values()))
-        logger.info(f"✅ bot_texts: {len(styles)} ألوان، {n_pos} أزرار لها مواضع")
+        n_pos = sum(1 for p in BUTTON_POSITIONS.values() if any(p.values()))
+        logger.info(
+            f"✅ نصوص محمّلة: {len(txt_bilingual)} نص عادي، "
+            f"{len(kb_bilingual)} زر كيبورد، {len(inl_bilingual)} زر inline، "
+            f"{len(merged_styles)} لون، {n_pos} موضع كيبورد"
+        )
     except Exception as e:
-        logger.warning(f"bot_texts error: {e}")
+        logger.warning(f"load_bot_texts error: {e}")
 
 # ─── Cache الكيبوردات والنصوص المسموحة ───────────────
 # يُبنى مرة عند load_bot_texts — لا يُعاد إلا بـ refresh_texts من بوت اللوج
@@ -865,13 +940,13 @@ def _format_schedule_card(entries, note=""):
     lines.append("*القرار المطلوب:*")
     return "\n".join(lines)
 
-def _schedule_card_markup(short_key):
+def _schedule_card_markup(short_key, uid=None):
     """أزرار البطاقة"""
     mk = telebot.types.InlineKeyboardMarkup(row_width=3)
     mk.row(
-        _make_inline("زر_sched_accept", "✅ قبول وإضافة", f"sched_accept_{short_key}"),
-        _make_inline("زر_sched_edit",   "✏️ تعديل",       f"sched_edit_{short_key}"),
-        _make_inline("زر_sched_cancel", "❌ إلغاء",        f"sched_cancel_{short_key}"),
+        _make_inline("زر_sched_accept", bt("زر_sched_accept", uid), f"sched_accept_{short_key}"),
+        _make_inline("زر_sched_edit",   bt("زر_sched_edit", uid),   f"sched_edit_{short_key}"),
+        _make_inline("زر_sched_cancel", bt("زر_sched_cancel", uid), f"sched_cancel_{short_key}"),
     )
     return mk
 
@@ -1779,8 +1854,8 @@ def get_bot_code_summary(uid):
         "تعديل_ملخص":   "زر_تعديل_ملخص",
         "تعديل_سعر":    "زر_تعديل_سعر",
         "تعديل_تنبيه":  "زر_تعديل_تنبيه",
-        "نشر_تلقائي":   "زر_نشر_تلقائي",
-        "مساعد_نايف":   "زر_مساعد_نايف",
+        "نشر_تلقائي":   "زر_نشر_تلقائي_تفعيل",
+        "مساعد_نايف":   "زر_مساعد_نايف_تفعيل",
     }.items()}
 
     # ─── المواد الحية من الشيت ───
@@ -1837,12 +1912,12 @@ def get_bot_code_summary(uid):
     lines.append("يصل الطلب للأدمن ليوافق أو يرفضه ويُضاف تلقائياً.")
 
     lines.append(f"\n## مساعد نايف ##")
-    lines.append(f"تفعيل: اضغط '🔴 🤖 {B['مساعد_نايف']}' ← يتحول إلى 🟢")
-    lines.append(f"إيقاف: اضغطه مرة ثانية ← يتحول إلى 🔴")
+    lines.append(f"تفعيل: اضغط الزر '{B['مساعد_نايف']}' وهو في حالة 🔴 ← يتحول إلى 🟢")
+    lines.append(f"إيقاف: اضغطه مرة ثانية وهو في حالة 🟢 ← يتحول إلى 🔴")
     lines.append("شرط مهم: يقرأ رسائلك فقط وأنت في الصفحة الرئيسية. إذا دخلت أي زر، يبقى مفعلاً لكن لا يقرأ حتى تعود.")
 
     lines.append(f"\n## النشر التلقائي ##")
-    lines.append(f"تفعيل: '🔕 {B['نشر_تلقائي']}' ← يتحول إلى 📢")
+    lines.append(f"تفعيل: اضغط الزر '{B['نشر_تلقائي']}' وهو في حالة 🔕 ← يتحول إلى 📢")
     lines.append("عند تفعيله تصلك إشعارات عند إضافة أي محتوى جديد.")
 
     lines.append("\n## تغيير اللغة ##")
@@ -1965,28 +2040,28 @@ def main_menu(uid, admin=False, owner=False):
         # ── الافتراضي الكودي — يعمل لو الشيت فارغ ──
         m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
         if admin or owner:
-            m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
-            m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid))
-            m.row(bt("زر_الاسعار", uid), bt("زر_الملخصات", uid), bt("زر_التنبيهات", uid))
-            m.row(bt("زر_الملازم", uid))
-            m.row(bt("زر_تعديل", uid), bt("زر_اضافة", uid))
-            m.row(bt("زر_اشعار", uid), bt("زر_رفع_ملف", uid), bt("زر_رفع_تعليمات", uid))
+            m.row(_make_btn("زر_التاريخ", uid), _make_btn("زر_المواد", uid))
+            m.row(_make_btn("زر_التكاليف", uid), _make_btn("زر_الجدول", uid))
+            m.row(_make_btn("زر_الاسعار", uid), _make_btn("زر_الملخصات", uid), _make_btn("زر_التنبيهات", uid))
+            m.row(_make_btn("زر_الملازم", uid))
+            m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
+            m.row(_make_btn("زر_اشعار", uid), _make_btn("زر_رفع_ملف", uid), _make_btn("زر_رفع_تعليمات", uid))
             if owner:
-                m.add(bt("زر_المستخدمين", uid))
+                m.add(_make_btn("زر_المستخدمين", uid))
         else:
-            m.row(bt("زر_التاريخ", uid), bt("زر_المواد", uid))
-            m.row(bt("زر_التكاليف", uid), bt("زر_الجدول", uid), bt("زر_الملخصات", uid))
-            m.row(bt("زر_الاسعار", uid), bt("زر_طلب_رفع", uid), bt("زر_التنبيهات", uid))
-            m.row(bt("زر_الملازم", uid))
+            m.row(_make_btn("زر_التاريخ", uid), _make_btn("زر_المواد", uid))
+            m.row(_make_btn("زر_التكاليف", uid), _make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
+            m.row(_make_btn("زر_الاسعار", uid), _make_btn("زر_طلب_رفع", uid), _make_btn("زر_التنبيهات", uid))
+            m.row(_make_btn("زر_الملازم", uid))
 
     # ── أزرار AI/النشر — تُضاف دائماً في آخر صف (ديناميكية) ──
     if AI_PROVIDERS:
         load_user_auto_publish(uid)
-        pub_status = "📢" if user_auto_publish.get(uid, False) else "🔕"
-        ai_status  = "🟢" if user_ai_enabled.get(uid, False) else "🔴"
+        pub_key = "زر_نشر_تلقائي_تفعيل" if user_auto_publish.get(uid, False) else "زر_نشر_تلقائي_تعطيل"
+        ai_key  = "زر_مساعد_نايف_تفعيل" if user_ai_enabled.get(uid, False) else "زر_مساعد_نايف_تعطيل"
         row_switches = [
-            f"{pub_status} {bt('زر_نشر_تلقائي', uid)}",
-            f"{ai_status} 🤖 {bt('زر_مساعد_نايف', uid)}",
+            _make_btn(pub_key, uid),
+            _make_btn(ai_key, uid),
         ]
         m.row(*row_switches)
 
@@ -1994,23 +2069,23 @@ def main_menu(uid, admin=False, owner=False):
 
 def back_only_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def back_step_menu(uid):
     """زر رجوع خطوة + خروج — يُستخدم داخل flows متعددة الخطوات"""
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
+    m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
 def back_skip_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row("⏭️ تخطي", bt("زر_عوده", uid))
+    m.row("⏭️ تخطي", _make_btn("زر_عوده", uid))
     return m
 
 def back_with_noexist(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add("لا يوجد", bt("زر_عوده", uid))
+    m.add("لا يوجد", _make_btn("زر_عوده", uid))
     return m
 
 def subjects_menu_kb(uid):
@@ -2018,7 +2093,7 @@ def subjects_menu_kb(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for s in subjects:
         m.add(s)
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m, subjects
 
 def subjects_with_noexist_kb(uid):
@@ -2026,55 +2101,55 @@ def subjects_with_noexist_kb(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for s in subjects:
         m.add(s)
-    m.add("🚫 لا يوجد", bt("زر_عوده", uid))
+    m.add("🚫 لا يوجد", _make_btn("زر_عوده", uid))
     return m, subjects
 
 def subject_options_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     for k in ["خيار_الجدول", "خيار_التكاليف", "خيار_السعر", "خيار_الملخص", "خيار_التنبيهات", "خيار_الملزمه"]:
-        m.add(bt(k, uid))
-    m.add(bt("زر_عوده", uid))
+        m.add(_make_btn(k, uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def dates_menu_kb(dates, uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for d in dates:
         m.add(d)
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def file_type_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add(bt("زر_اضافة_تكليف", uid), bt("زر_اضافة_ملخص", uid))
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_اضافة_تكليف", uid), _make_btn("زر_اضافة_ملخص", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def add_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row(bt("زر_اضافة_محاضره", uid), bt("زر_اضافة_تكليف", uid))
-    m.row(bt("زر_اضافة_ملخص", uid), bt("زر_اضافة_سعر", uid))
-    m.row(bt("زر_اضافة_تنبيه", uid), bt("زر_اضافة_ملزمه", uid))
-    m.add(bt("زر_عوده", uid))
+    m.row(_make_btn("زر_اضافة_محاضره", uid), _make_btn("زر_اضافة_تكليف", uid))
+    m.row(_make_btn("زر_اضافة_ملخص", uid), _make_btn("زر_اضافة_سعر", uid))
+    m.row(_make_btn("زر_اضافة_تنبيه", uid), _make_btn("زر_اضافة_ملزمه", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def edit_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row(bt("زر_تعديل_محاضره", uid), bt("زر_تعديل_تكليف", uid))
-    m.row(bt("زر_تعديل_ملخص", uid), bt("زر_تعديل_سعر", uid))
-    m.row(bt("زر_تعديل_تنبيه", uid), bt("زر_تعديل_ملزمه", uid))
-    m.add(bt("زر_عوده", uid))
+    m.row(_make_btn("زر_تعديل_محاضره", uid), _make_btn("زر_تعديل_تكليف", uid))
+    m.row(_make_btn("زر_تعديل_ملخص", uid), _make_btn("زر_تعديل_سعر", uid))
+    m.row(_make_btn("زر_تعديل_تنبيه", uid), _make_btn("زر_تعديل_ملزمه", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def edit_action_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add(bt("زر_تعديل_زرار", uid), bt("زر_حذف_زرار", uid))
-    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
+    m.add(_make_btn("زر_تعديل_زرار", uid), _make_btn("زر_حذف_زرار", uid))
+    m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
 def buildings_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("🏛 القديم", "🏫 الاداب")
-    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
+    m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
 def rooms_menu_kb(building, uid):
@@ -2082,7 +2157,7 @@ def rooms_menu_kb(building, uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for r in rooms:
         m.add(r)
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m, rooms
 
 def lecture_time_menu(uid):
@@ -2090,7 +2165,7 @@ def lecture_time_menu(uid):
     m.add("🕐 08:00 - 10:00", "🕐 10:00 - 12:00")
     m.add("🕐 12:00 - 14:00", "⏰ توقيت آخر")
     m.add("لا يوجد")
-    m.row("↩️ رجوع خطوة", bt("زر_عوده", uid))
+    m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
 def manage_users_menu(uid):
@@ -2152,26 +2227,26 @@ def _smart_search_user(query):
 
 def display_mode_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row(bt("زر_حسب_التاريخ", uid), bt("زر_حسب_الماده", uid))
-    m.add(bt("زر_عوده", uid))
+    m.row(_make_btn("زر_حسب_التاريخ", uid), _make_btn("زر_حسب_الماده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def date_type_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row(bt("زر_يوم", uid), bt("زر_فتره", uid))
-    m.add(bt("زر_عوده", uid))
+    m.row(_make_btn("زر_يوم", uid), _make_btn("زر_فتره", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def help_audience_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("👤 للمستخدمين", "👑 للأدمن")
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def help_view_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("👤 تعليمات المستخدم", "👑 تعليمات الأدمن")
-    m.add(bt("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m
 
 def lang_menu(uid):
@@ -2181,7 +2256,7 @@ def lang_menu(uid):
 
 def upload_confirm_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.row("✅ إرسال", bt("زر_عوده", uid))
+    m.row("✅ إرسال", _make_btn("زر_عوده", uid))
     return m
 
 def get_subjects():
@@ -2302,7 +2377,7 @@ def date_suggestions_menu(subject=None, for_lecture=False, for_alert=False, uid=
     m = telebot.types.ReplyKeyboardMarkup(row_width=3, resize_keyboard=True)
     for d in dates:
         m.add(d)
-    back = bt("زر_عوده", uid) if uid else "🔙 العودة"
+    back = _make_btn("زر_عوده", uid) if uid else "🔙 العودة"
     m.add(back)
     return m
 
@@ -2524,9 +2599,9 @@ def try_execute_admin_command(text, uid, user_role, chat_id, bot_instance):
         preview = "\n".join([f"📌 {item.strip()}" for item in matches])
         markup = telebot.types.InlineKeyboardMarkup(row_width=3)
         markup.add(
-            _make_inline("زر_confirm_multi", "✅ إرسال", f"confirm_multi_{short_key}"),
-            _make_inline("زر_edit_multi",    "✏️ تعديل", f"edit_multi_{short_key}"),
-            _make_inline("زر_reject_multi",  "❌ رفض",   f"reject_multi_{short_key}"),
+            _make_inline("زر_confirm_multi", bt("زر_confirm_multi", uid), f"confirm_multi_{short_key}"),
+            _make_inline("زر_edit_multi",    bt("زر_edit_multi", uid),    f"edit_multi_{short_key}"),
+            _make_inline("زر_reject_multi",  bt("زر_reject_multi", uid),  f"reject_multi_{short_key}"),
         )
         return True, f"📋 *سيتم إضافة البيانات التالية:*\n\n{preview}\n\nهل تريد المتابعة؟", markup
 
@@ -2927,13 +3002,13 @@ def notify_owners_new_request(requester_id, requester_name, phone=""):
             f"━━━━━━━━━━━━━━━━━━━━")
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        _make_inline("زر_approve_admin",  "⭐ أدمن",         f"approve_role_admin_{short_key}"),
-        _make_inline("زر_approve_user",   "👤 مستخدم",       f"approve_role_user_{short_key}"),
+        _make_inline("زر_approve_admin",  bt("زر_approve_admin"),  f"approve_role_admin_{short_key}"),
+        _make_inline("زر_approve_user",   bt("زر_approve_user"),   f"approve_role_user_{short_key}"),
     )
     markup.row(
-        _make_inline("زر_approve_rename", "✏️ تغيير الاسم",  f"approve_rename_{short_key}"),
-        _make_inline("زر_approve_ai",     "🤖 تفعيل AI",     f"approve_ai_on_{short_key}"),
-        _make_inline("زر_reject",         "❌ رفض",           f"reject_{short_key}"),
+        _make_inline("زر_approve_rename", bt("زر_approve_rename"), f"approve_rename_{short_key}"),
+        _make_inline("زر_approve_ai",     bt("زر_approve_ai"),     f"approve_ai_on_{short_key}"),
+        _make_inline("زر_reject",         bt("زر_reject"),         f"reject_{short_key}"),
     )
     if requester_id not in request_msg_ids:
         request_msg_ids[requester_id] = {}
@@ -3298,11 +3373,10 @@ def send_user_card(chat_id, row, edit_existing=False):
     )
 
     # الصف الثاني: تفعيل/تعطيل AI + تغيير الاسم
-    ai_button_text = "🚫 تعطيل AI" if ai_val == "TRUE" else "🤖 تفعيل AI"
     ai_key = "زر_ai_off" if ai_val == "TRUE" else "زر_ai_on"
     markup.row(
-        _make_inline(ai_key,           ai_button_text,   f"ai_{'off' if ai_val == 'TRUE' else 'on'}_{uid_str}"),
-        _make_inline("زر_rename_user", "✏️ تغيير الاسم", f"rename_{uid_str}"),
+        _make_inline(ai_key,           bt(ai_key),           f"ai_{'off' if ai_val == 'TRUE' else 'on'}_{uid_str}"),
+        _make_inline("زر_rename_user", bt("زر_rename_user"), f"rename_{uid_str}"),
     )
 
     if edit_existing and int(uid_str) in _user_card_messages:
@@ -4382,7 +4456,7 @@ def handle_message(message):
                 card["raw_text"] = combined
                 new_card_text = _format_schedule_card(entries, note)
                 card["card_text"] = new_card_text
-                mk = _schedule_card_markup(short_key)
+                mk = _schedule_card_markup(short_key, uid)
                 try:
                     bot.edit_message_text(new_card_text, card["chat_id"], card["msg_id"],
                                           parse_mode="Markdown", reply_markup=mk)
@@ -4442,7 +4516,7 @@ def handle_message(message):
                         pass
                     short_key = f"sched_{int(time.time())}_{uid}"
                     card_text = _format_schedule_card(entries, note)
-                    mk = _schedule_card_markup(short_key)
+                    mk = _schedule_card_markup(short_key, uid)
                     sent = bot.send_message(message.chat.id, card_text,
                                             parse_mode="Markdown", reply_markup=mk)
                     _schedule_cards[short_key] = {
@@ -4601,8 +4675,7 @@ def handle_message(message):
         subjects_kb, subjects_list = subjects_menu_kb(uid)
         data = get_data()
 
-        ai_button_text = f"🤖 {bt('زر_مساعد_نايف', uid)}"
-        if text in [f"🟢 {ai_button_text}", f"🔴 {ai_button_text}", ai_button_text]:
+        if text in [bt("زر_مساعد_نايف_تفعيل", uid), bt("زر_مساعد_نايف_تعطيل", uid)]:
             if not AI_PROVIDERS:
                 # لا يوجد مزود AI → لا شيء
                 bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid),
@@ -4612,8 +4685,8 @@ def handle_message(message):
                 # ليس لديه صلاحية → اسأله إذا يريد طلب صلاحية
                 markup = telebot.types.InlineKeyboardMarkup()
                 markup.row(
-                    _make_inline("زر_ai_request_yes", "✅ نعم", "ai_request_yes"),
-                    _make_inline("زر_ai_request_no",  "❌ لا",  "ai_request_no"),
+                    _make_inline("زر_ai_request_yes", bt("زر_ai_request_yes", uid), "ai_request_yes"),
+                    _make_inline("زر_ai_request_no",  bt("زر_ai_request_no", uid),  "ai_request_no"),
                 )
                 bot.send_message(
                     message.chat.id,
@@ -4647,8 +4720,7 @@ def handle_message(message):
                 )
             return
 
-        publish_button_text = f"{bt('زر_نشر_تلقائي', uid)}"
-        if text in [f"📢 {publish_button_text}", f"🔕 {publish_button_text}", publish_button_text]:
+        if text in [bt("زر_نشر_تلقائي_تفعيل", uid), bt("زر_نشر_تلقائي_تعطيل", uid)]:
             if not is_ai_allowed(uid):
                 bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
                 return
@@ -5154,8 +5226,8 @@ def handle_message(message):
                         _file_req_store[short_key] = {"req_uid": req_uid, "date": date, "subj": subj, "col": col, "fid": fid}
                         mk_req = telebot.types.InlineKeyboardMarkup()
                         mk_req.row(
-                            _make_inline("زر_file_approve", "✅ قبول", f"file_req:approve:{short_key}"),
-                            _make_inline("زر_file_reject",  "❌ رفض",  f"file_req:reject:{short_key}"),
+                            _make_inline("زر_file_approve", bt("زر_file_approve"), f"file_req:approve:{short_key}"),
+                            _make_inline("زر_file_reject",  bt("زر_file_reject"),  f"file_req:reject:{short_key}"),
                         )
                         caption = (f"📨 طلب رفع {col_label}\n👤 من: {message.from_user.full_name}\n📌 {subj} | 📅 {date}")
                         for tid in targets:
@@ -6277,8 +6349,8 @@ def handle_ai_permission_request(call):
         )
         markup_owners = telebot.types.InlineKeyboardMarkup()
         markup_owners.row(
-            _make_inline("زر_grant_ai", "✅ منح الصلاحية", f"grant_ai_{uid}"),
-            _make_inline("زر_deny_ai",  "❌ رفض",           f"deny_ai_{uid}"),
+            _make_inline("زر_grant_ai", bt("زر_grant_ai"), f"grant_ai_{uid}"),
+            _make_inline("زر_deny_ai",  bt("زر_deny_ai"),  f"deny_ai_{uid}"),
         )
         sent_any = False
         for oid in owners:

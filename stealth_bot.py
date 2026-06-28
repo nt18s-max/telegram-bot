@@ -25,11 +25,13 @@ try:
     users_sheet      = spreadsheet.worksheet("المستخدمين")
     try:    bot_texts_sheet    = spreadsheet.worksheet("bot_texts")
     except: bot_texts_sheet    = None
+    try:    inline_buttons_sheet = spreadsheet.worksheet("inline_buttons")
+    except: inline_buttons_sheet = None
     try:    ai_providers_sheet = spreadsheet.worksheet("ai_providers")
     except: ai_providers_sheet = None
 except Exception as e:
     print(f"❌ خطأ Google Sheets: {e}")
-    users_sheet = bot_texts_sheet = ai_providers_sheet = None
+    users_sheet = bot_texts_sheet = inline_buttons_sheet = ai_providers_sheet = None
 
 # ===================== أعمدة الشيت =====================
 COL_ID      = 2   # C
@@ -57,29 +59,45 @@ REQUIRED_KEYS = [
     "stealth_no_users",       "stealth_target_set",      "stealth_target_none",
     "stealth_send_fail",      "stealth_help_note",       "stealth_help_owner",
     "stealth_help_user",      "stealth_choose_user",     "stealth_hide_hint",
-    "stealth_qhide_hint",     "stealth_setvisible_hint", "stealth_no_target",
+    "stealth_qhide_hint",     "stealth_setvisible_hint",
     "stealth_ai_off_timed",   "stealth_ai_off_idle",     "stealth_ai_on",
     "stealth_settings_title", "stealth_settings_ai",     "stealth_settings_visible",
     "stealth_ai_on_status",   "stealth_ai_off_status",   "stealth_visible_none",
     "stealth_incoming_msg",   "stealth_refresh_done",    "stealth_reenc_not_found",
-    "stealth_media_sent",
+    "stealth_media_sent",     "stealth_الغاء_اختيار",
 ]
 
 BOT_TEXTS: dict = {}
+BUTTON_STYLES: dict = {}
+_VALID_STYLES = {"danger", "success", "primary"}
 
 def load_bot_texts():
-    global BOT_TEXTS
+    global BOT_TEXTS, BUTTON_STYLES
     if not bot_texts_sheet:
         tg_log("ERROR", "stealth_bot: bot_texts_sheet غير متاح")
         return
     try:
         loaded = {}
+        styles = {}
+        # 1) نصوص الرسائل العادية (bot_texts) — كل مفتاح يبدأ بـ stealth_
         for row in bot_texts_sheet.get_all_values():
             if len(row) >= 2 and row[0].strip().startswith("stealth_"):
                 val = row[1].strip()
                 if val:
                     loaded[row[0].strip()] = val
+        # 2) أزرار Inline (inline_buttons) — نفس الشرط + قراءة اللون من العمود D
+        if inline_buttons_sheet:
+            for row in inline_buttons_sheet.get_all_values():
+                if len(row) >= 2 and row[0].strip().startswith("stealth_"):
+                    key = row[0].strip()
+                    val = row[1].strip()
+                    if val:
+                        loaded[key] = val
+                    style = row[3].strip().lower() if len(row) > 3 else ""
+                    if style in _VALID_STYLES:
+                        styles[key] = style
         BOT_TEXTS = loaded
+        BUTTON_STYLES = styles
         missing = [k for k in REQUIRED_KEYS if k not in BOT_TEXTS]
         if missing:
             tg_log("WARNING",
@@ -540,7 +558,15 @@ def handle_dot_commands(msg):
                 f"{info['name']} {info['username']}",
                 callback_data=f"stl_target_{uid}"
             ))
-        markup.add(InlineKeyboardButton("🚫 إلغاء الاختيار", callback_data="stl_target_none"))
+        _cancel_label = tx("stealth_الغاء_اختيار")
+        _cancel_style  = BUTTON_STYLES.get("stealth_الغاء_اختيار", "")
+        if _cancel_style in _VALID_STYLES:
+            try:
+                markup.add(InlineKeyboardButton(_cancel_label, callback_data="stl_target_none", style=_cancel_style))
+            except Exception:
+                markup.add(InlineKeyboardButton(_cancel_label, callback_data="stl_target_none"))
+        else:
+            markup.add(InlineKeyboardButton(_cancel_label, callback_data="stl_target_none"))
         _del()
         bot.send_message(chat_id, tx("stealth_choose_user"), reply_markup=markup)
         return

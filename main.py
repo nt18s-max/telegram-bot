@@ -19,13 +19,6 @@ def run_bot_subprocess(script_name, token_var):
         time.sleep(5)
 
 if __name__ == "__main__":
-    # study_bot
-    threading.Thread(
-        target=run_bot_subprocess,
-        args=("study_bot.py", "STUDY_BOT_TOKEN"),
-        daemon=True
-    ).start()
-
     # study_test_bot
     threading.Thread(
         target=run_bot_subprocess,
