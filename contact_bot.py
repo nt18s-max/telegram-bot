@@ -3,12 +3,15 @@
 # ====================================================
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
 import gspread
 from google.oauth2.service_account import Credentials
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse as _urlparse
 
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -22,6 +25,10 @@ load_dotenv()
 CONTACT_BOT_TOKEN = os.getenv("CONTACT_BOT_TOKEN")
 DB_FILE           = "contact_bot_data.json"
 TIMEZONE          = "Asia/Riyadh"
+
+# ── إعدادات endpoint داخلي (تحديث من بوت اللوج) ─────────
+INTERNAL_PORT   = int(os.getenv("CONTACT_INTERNAL_PORT", 10002))
+INTERNAL_SECRET = os.getenv("INTERNAL_SECRET", "study_bot_secret_2025")
 
 logging.basicConfig(level=logging.INFO)
 NAME, MESSAGE = range(2)
@@ -203,6 +210,47 @@ def load_texts() -> None:
         TEXTS_BILINGUAL = {k: {"ar": v, "en": v} for k, v in DEFAULT_TEXTS.items()}
         TEXTS           = dict(DEFAULT_TEXTS)
         BUTTON_STYLES   = {}
+
+# ── endpoint داخلي — يستقبل أوامر من log_bot.py ────────
+def _handle_internal_cmd(cmd: str) -> str:
+    if cmd in ("refresh_texts", "refresh_all"):
+        load_texts()
+        return f"✅ بوت التواصل: نصوص محدّثة — {len(TEXTS_BILINGUAL)} مفتاح، {len(BUTTON_STYLES)} زر ملوّن"
+    elif cmd == "status":
+        return f"📊 *بوت التواصل*\n📝 نصوص: {len(TEXTS_BILINGUAL)} مفتاح\n🎨 أزرار ملوّنة: {len(BUTTON_STYLES)}"
+    else:
+        return f"❌ أمر غير معروف ببوت التواصل: {cmd}"
+
+class _InternalHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body   = self.rfile.read(length).decode()
+            params = dict(_urlparse.parse_qsl(body))
+            if params.get("secret", "") != INTERNAL_SECRET:
+                self._respond(403, "forbidden")
+                return
+            result = _handle_internal_cmd(params.get("cmd", ""))
+            self._respond(200, result)
+        except Exception as e:
+            self._respond(500, str(e))
+
+    def _respond(self, code, text):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(text.encode())
+
+    def log_message(self, *args):
+        pass  # تعطيل logs الافتراضية
+
+def _run_internal_server():
+    try:
+        server = HTTPServer(("0.0.0.0", INTERNAL_PORT), _InternalHandler)
+        print(f"✅ endpoint داخلي لبوت التواصل على port {INTERNAL_PORT}")
+        server.serve_forever()
+    except Exception as e:
+        print(f"❌ خطأ endpoint بوت التواصل: {e}")
 
 # ── Google Sheets — جلب الأدمن ────────────────────────
 def _get_users_sheet():
@@ -418,6 +466,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── تشغيل ─────────────────────────────────────────────
 def run():
     load_texts()
+    threading.Thread(target=_run_internal_server, daemon=True).start()
 
     async def post_init(application):
         await application.bot.set_my_commands([

@@ -7,11 +7,17 @@ import gspread
 import requests as _requests
 from oauth2client.service_account import ServiceAccountCredentials
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse as _urlparse
 
 # ===================== إعدادات =====================
 TOKEN     = os.environ.get("STEALTH_BOT_TOKEN")
 SHEET_KEY = os.environ.get("SHEET_KEY")
 LOG_TOKEN = os.environ.get("STUDY_BOT_LOG_TOKEN", "")
+
+# ── إعدادات endpoint داخلي (تحديث من بوت اللوج) ─────────
+INTERNAL_PORT   = int(os.environ.get("STEALTH_INTERNAL_PORT", 10003))
+INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "study_bot_secret_2025")
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -189,6 +195,54 @@ def get_ai_reply(text: str) -> str:
             tg_log("WARNING", f"stealth AI ({p['provider']}): {e}")
             continue
     return tx("stealth_ai_error")
+
+# ===================== endpoint داخلي — أوامر من log_bot.py =====================
+def _handle_internal_cmd(cmd: str) -> str:
+    if cmd == "refresh_texts":
+        load_bot_texts()
+        return f"✅ ستيلث: نصوص محدّثة — {len(BOT_TEXTS)} مفتاح"
+    elif cmd == "refresh_ai":
+        load_ai_providers()
+        return f"✅ ستيلث: AI محدّث — {len(AI_PROVIDERS)} مزود"
+    elif cmd == "refresh_all":
+        load_bot_texts()
+        load_ai_providers()
+        return f"✅ ستيلث: تحديث شامل — {len(BOT_TEXTS)} نص، {len(AI_PROVIDERS)} مزود AI"
+    elif cmd == "status":
+        return f"📊 *ستيلث بوت*\n📝 نصوص: {len(BOT_TEXTS)}\n🤖 AI: {len(AI_PROVIDERS)} مزود"
+    else:
+        return f"❌ أمر غير معروف بستيلث: {cmd}"
+
+class _InternalHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body   = self.rfile.read(length).decode()
+            params = dict(_urlparse.parse_qsl(body))
+            if params.get("secret", "") != INTERNAL_SECRET:
+                self._respond(403, "forbidden")
+                return
+            result = _handle_internal_cmd(params.get("cmd", ""))
+            self._respond(200, result)
+        except Exception as e:
+            self._respond(500, str(e))
+
+    def _respond(self, code, text):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(text.encode())
+
+    def log_message(self, *args):
+        pass
+
+def _run_internal_server():
+    try:
+        server = HTTPServer(("0.0.0.0", INTERNAL_PORT), _InternalHandler)
+        tg_log("INFO", f"✅ endpoint داخلي لستيلث على port {INTERNAL_PORT}")
+        server.serve_forever()
+    except Exception as e:
+        tg_log("ERROR", f"خطأ endpoint ستيلث: {e}")
 
 # ===================== مالك البوت =====================
 def get_fake_ai_owners() -> list:
@@ -614,8 +668,6 @@ def handle_media(msg):
 def handle_refresh(msg):
     if not is_owner(msg.from_user.id):
         return
-    if str(msg.chat.id) != str(LOG_TOKEN):
-        return
     try:
         bot.delete_message(msg.chat.id, msg.message_id)
     except:
@@ -691,6 +743,7 @@ def run():
     load_ai_providers()
     if not AI_PROVIDERS:
         tg_log("WARNING", "stealth_bot: لا يوجد مزود AI نشط")
+    threading.Thread(target=_run_internal_server, daemon=True).start()
     tg_log("INFO", "▶️ stealth_bot يعمل")
     bot.infinity_polling()
 

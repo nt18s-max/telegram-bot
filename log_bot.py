@@ -25,6 +25,12 @@ INTERNAL_PORT    = int(os.environ.get("INTERNAL_PORT", 10001))
 INTERNAL_SECRET  = os.environ.get("INTERNAL_SECRET", "study_bot_secret_2025")
 INTERNAL_URL     = f"http://localhost:{INTERNAL_PORT}"
 
+# ── منافذ باقي البوتات (تحديث شامل حقيقي من زر واحد) ────
+CONTACT_INTERNAL_PORT = int(os.environ.get("CONTACT_INTERNAL_PORT", 10002))
+STEALTH_INTERNAL_PORT = int(os.environ.get("STEALTH_INTERNAL_PORT", 10003))
+CONTACT_INTERNAL_URL  = f"http://localhost:{CONTACT_INTERNAL_PORT}"
+STEALTH_INTERNAL_URL  = f"http://localhost:{STEALTH_INTERNAL_PORT}"
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)-8s | %(message)s")
 logger = logging.getLogger("LogBot")
@@ -152,19 +158,19 @@ def is_log_user(uid: int) -> bool:
     return uid in get_log_users()
 
 # ─────────────────────────────────────────────────────
-# إرسال أمر للبوت الأساسي عبر HTTP
+# إرسال أمر لأي بوت عبر HTTP الداخلي
 # ─────────────────────────────────────────────────────
-def _send_cmd(cmd: str) -> str:
-    """يرسل أمر للبوت الأساسي ويرجع الرد"""
+def _send_cmd(cmd: str, url: str = INTERNAL_URL) -> str:
+    """يرسل أمر لبوت معيّن (افتراضياً البوت الأساسي) ويرجع الرد"""
     try:
         resp = _requests.post(
-            INTERNAL_URL,
+            url,
             data={"cmd": cmd, "secret": INTERNAL_SECRET},
             timeout=10
         )
         return resp.text
     except Exception as e:
-        return f"❌ فشل الاتصال بالبوت: {e}"
+        return f"❌ فشل الاتصال: {e}"
 
 # ─────────────────────────────────────────────────────
 # فلتر: فقط مستخدمو اللوج
@@ -186,8 +192,13 @@ def cmd_start(message):
 def cmd_refresh_texts(message):
     msg = bot.send_message(message.chat.id, ltx("log_جاري_تحديث_النصوص"))
     load_log_texts()  # تحديث نصوص بوت اللوج نفسه
-    result = _send_cmd("refresh_texts")  # تحديث نصوص البوت الأساسي
-    bot.edit_message_text(result, message.chat.id, msg.message_id)
+    r_study   = _send_cmd("refresh_texts", INTERNAL_URL)
+    r_contact = _send_cmd("refresh_texts", CONTACT_INTERNAL_URL)
+    r_stealth = _send_cmd("refresh_texts", STEALTH_INTERNAL_URL)
+    result = (f"*البوت الرئيسي:*\n{r_study}\n\n"
+              f"*بوت التواصل:*\n{r_contact}\n\n"
+              f"*بوت ستيلث:*\n{r_stealth}")
+    bot.edit_message_text(result, message.chat.id, msg.message_id, parse_mode="Markdown")
 
 @bot.message_handler(commands=["refresh_users"], func=_log_only)
 def cmd_refresh_users(message):
@@ -198,8 +209,10 @@ def cmd_refresh_users(message):
 @bot.message_handler(commands=["refresh_ai"], func=_log_only)
 def cmd_refresh_ai(message):
     msg = bot.send_message(message.chat.id, ltx("log_جاري_تحديث_AI"))
-    result = _send_cmd("refresh_ai")
-    bot.edit_message_text(result, message.chat.id, msg.message_id)
+    r_study   = _send_cmd("refresh_ai", INTERNAL_URL)
+    r_stealth = _send_cmd("refresh_ai", STEALTH_INTERNAL_URL)
+    result = f"*البوت الرئيسي:*\n{r_study}\n\n*بوت ستيلث:*\n{r_stealth}"
+    bot.edit_message_text(result, message.chat.id, msg.message_id, parse_mode="Markdown")
 
 @bot.message_handler(commands=["refresh_data"], func=_log_only)
 def cmd_refresh_data(message):
@@ -212,8 +225,13 @@ def cmd_refresh_all(message):
     msg = bot.send_message(message.chat.id, ltx("log_جاري_التحديث_الكامل"))
     load_log_texts()  # تحديث نصوص بوت اللوج نفسه
     _load_log_users()  # تحديث مستخدمي اللوج أيضاً ضمن التحديث الشامل
-    result = _send_cmd("refresh_all")  # تحديث كل شيء بالبوت الأساسي
-    bot.edit_message_text(result, message.chat.id, msg.message_id)
+    r_study   = _send_cmd("refresh_all", INTERNAL_URL)
+    r_contact = _send_cmd("refresh_all", CONTACT_INTERNAL_URL)
+    r_stealth = _send_cmd("refresh_all", STEALTH_INTERNAL_URL)
+    result = (f"*البوت الرئيسي:*\n{r_study}\n\n"
+              f"*بوت التواصل:*\n{r_contact}\n\n"
+              f"*بوت ستيلث:*\n{r_stealth}")
+    bot.edit_message_text(result, message.chat.id, msg.message_id, parse_mode="Markdown")
 
 @bot.message_handler(commands=["refresh_log_users"], func=_log_only)
 def cmd_refresh_log_users(message):
@@ -223,8 +241,10 @@ def cmd_refresh_log_users(message):
 @bot.message_handler(commands=["status"], func=_log_only)
 def cmd_status(message):
     msg = bot.send_message(message.chat.id, ltx("log_جاري_جلب_الحالة"))
-    result = _send_cmd("status")
-    result += f"\n\n*بوت اللوج:*\n👁 مستخدمو اللوج: {len(_log_users)}"
+    r_study   = _send_cmd("status", INTERNAL_URL)
+    r_contact = _send_cmd("status", CONTACT_INTERNAL_URL)
+    r_stealth = _send_cmd("status", STEALTH_INTERNAL_URL)
+    result = f"{r_study}\n\n{r_contact}\n\n{r_stealth}\n\n*بوت اللوج:*\n👁 مستخدمو اللوج: {len(_log_users)}"
     bot.edit_message_text(result, message.chat.id, msg.message_id,
                           parse_mode="Markdown")
 
