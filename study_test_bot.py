@@ -2574,35 +2574,22 @@ def load_button_texts():
     ])
 
 def main_menu(uid, admin=False, owner=False):
-    # ── حدد الفئة ──
-    if owner:
-        role = "owner"
-    elif admin:
-        role = "admin"
+    # ── القائمة الرئيسية تُبنى بالكامل من الكود — أعمدة الموضع بالشيت لم تعد تُستخدم لهذا الغرض ──
+    m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    if admin or owner:
+        m.row(_make_btn("زر_المواد", uid), _make_btn("زر_التكاليف", uid))
+        m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
+        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
+        m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
+        m.row(_make_btn("زر_اضافة_محاضره", uid), _make_btn("زر_اشعار", uid))
+        m.row(_make_btn("زر_رفع_تعليمات", uid))
+        if owner:
+            m.add(_make_btn("زر_المستخدمين", uid))
     else:
-        role = "user"
-
-    # ── إذا في cache من الشيت → استخدمه مباشرة ──
-    cached = _keyboards_cache.get(role)
-    if cached is not None:
-        m = cached
-    else:
-        # ── الافتراضي الكودي — يعمل لو الشيت فارغ ──
-        m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-        if admin or owner:
-            m.row(_make_btn("زر_المواد", uid), _make_btn("زر_التكاليف", uid))
-            m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
-            m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
-            m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
-            m.row(_make_btn("زر_اضافة_محاضره", uid), _make_btn("زر_اشعار", uid))
-            m.row(_make_btn("زر_رفع_تعليمات", uid))
-            if owner:
-                m.add(_make_btn("زر_المستخدمين", uid))
-        else:
-            m.row(_make_btn("زر_المواد", uid), _make_btn("زر_التكاليف", uid))
-            m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
-            m.row(_make_btn("زر_طلب_رفع", uid))
-            m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
+        m.row(_make_btn("زر_المواد", uid), _make_btn("زر_التكاليف", uid))
+        m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
+        m.row(_make_btn("زر_طلب_رفع", uid))
+        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
 
     # ── أزرار AI/النشر — تُضاف دائماً في آخر صف (ديناميكية) ──
     if AI_PROVIDERS:
