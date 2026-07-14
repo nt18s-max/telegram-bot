@@ -132,6 +132,8 @@ DEFAULT_BOT_TEXTS = {
     "زر_طلب_رفع_en": "",
     "زر_رفع_تعليمات_ar": "",
     "زر_رفع_تعليمات_en": "",
+    "زر_اعدادات_ar": "⚙️ الإعدادات",
+    "زر_اعدادات_en": "⚙️ Settings",
     "زر_اشعار_ar": "",
     "زر_اشعار_en": "",
     "زر_اضافة_ar": "",
@@ -2455,26 +2457,23 @@ def get_bot_code_summary(uid):
     lines.append(f"{B['طلب_رفع']} ← اسم المادة ← {B['اضافة_تكليف']} أو {B['اضافة_ملخص']} ← التاريخ ← أرسل الملف ← ✅ إرسال")
     lines.append("يصل الطلب للأدمن ليوافق أو يرفضه ويُضاف تلقائياً.")
 
-    lines.append(f"\n## مساعد نايف ##")
-    lines.append(f"تفعيل: اضغط الزر '{B['مساعد_نايف']}' وهو في حالة 🔴 ← يتحول إلى 🟢")
-    lines.append(f"إيقاف: اضغطه مرة ثانية وهو في حالة 🟢 ← يتحول إلى 🔴")
-    lines.append("شرط مهم: يقرأ رسائلك فقط وأنت في الصفحة الرئيسية. إذا دخلت أي زر، يبقى مفعلاً لكن لا يقرأ حتى تعود.")
-
-    lines.append(f"\n## النشر التلقائي ##")
-    lines.append(f"تفعيل: اضغط الزر '{B['نشر_تلقائي']}' وهو في حالة 🔕 ← يتحول إلى 📢")
-    lines.append("عند تفعيله تصلك إشعارات عند إضافة أي محتوى جديد.")
-
-    lines.append("\n## تغيير اللغة ##")
-    lines.append("/lang ← اختر العربية أو الإنجليزية")
+    lines.append(f"\n## الإعدادات (مساعد نايف / النشر التلقائي / اللغة) ##")
+    lines.append(f"اضغط زر '{bt('زر_اعدادات', uid)}' من القائمة الرئيسية ← تظهر أزرار Inline:")
+    lines.append("• سويتش مساعد نايف: 🔴 معطل ← يتحول إلى 🟢 مفعل عند الضغط.")
+    lines.append("شرط مهم لمساعد نايف: يقرأ رسائلك فقط وأنت في الصفحة الرئيسية. إذا دخلت أي زر، يبقى مفعلاً لكن لا يقرأ حتى تعود.")
+    lines.append("• سويتش النشر التلقائي: 🔕 معطل ← يتحول إلى 📢 مفعل عند الضغط. عند تفعيله تصلك إشعارات عند إضافة أي محتوى جديد.")
+    lines.append("• اللغة: اختر 🇾🇪 العربية أو 🇬🇧 English.")
 
     # ─── ميزات الأدمن/المالك ───
     lines.append("\n### ميزات الأدمن والمالك ###")
 
     lines.append(f"\n## إضافة محاضرة ##")
-    lines.append(f"{B['اضافة_محاضره']} (من القائمة الرئيسية مباشرة): التاريخ ← المبنى ← القاعة ← المادة ← الوقت")
+    lines.append(f"{B['اضافة']} ← {B['اضافة_محاضره']}: التاريخ ← المبنى ← القاعة ← المادة ← الوقت")
 
     lines.append(f"\n## إضافة بيانات أخرى ##")
     lines.append(f"{B['اضافة']} ← اختر النوع:")
+    lines.append(f"• {B['اضافة_محاضره']}: التاريخ ← المبنى ← القاعة ← المادة ← الوقت")
+    lines.append(f"• {B['رفع_تعليمات']}: اختر الجمهور (مستخدمين/أدمن) ← نص توضيحي (اختياري) ← أرسل الملف")
     lines.append(f"• {B['اضافة_تكليف']}: المادة ← اسم التكليف ← نص و/أو ملفات ← (تنبيه اختياري) ← حفظ")
     lines.append(f"• {B['اضافة_ملخص']}: المادة (كل المواد) ← أرسل ملف الملخص ← اختر اسم الطالب (أو أضف طالب جديد)")
     lines.append(f"• {B['اضافة_ملزمه']}: المادة ← اسم الملزمة ← أرسل الملف ← ✅ حفظ أو 💰 إضافة سعر")
@@ -2522,6 +2521,7 @@ def _get_button_description(key):
         "زر_تعديل":        "للأدمن: تعديل أو حذف محاضرة، تكليف، ملخص، ملزمة، أو نموذج اختبار.",
         "زر_المستخدمين":   "للمالك: إدارة المستخدمين وصلاحياتهم.",
         "زر_عوده":         "العودة للقائمة الرئيسية.",
+        "زر_اعدادات":      "يعرض إعدادات مساعد نايف والنشر التلقائي واللغة كأزرار Inline.",
     }
     return desc.get(key, "زر للتحكم في البوت.")
 
@@ -2544,7 +2544,7 @@ def load_button_texts():
     button_keys = [
         "زر_المواد", "زر_التكاليف", "زر_الجدول",
         "زر_الملخصات", "زر_طلب_رفع", "زر_رفع_تعليمات", "زر_الملازم", "زر_اضافة_محاضره",
-        "زر_نماذج_الاختبارات",
+        "زر_نماذج_الاختبارات", "زر_اعدادات",
         "زر_اشعار", "زر_اضافة", "زر_تعديل", "زر_المستخدمين", "زر_عوده",
         "زر_تحديد_الكل", "زر_تم_التحديد",
         "زر_اضافة_محاضره", "زر_اضافة_تكليف", "زر_اضافة_ملخص",
@@ -2581,8 +2581,7 @@ def main_menu(uid, admin=False, owner=False):
         m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_الملخصات", uid))
         m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
         m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
-        m.row(_make_btn("زر_اضافة_محاضره", uid), _make_btn("زر_اشعار", uid))
-        m.row(_make_btn("زر_رفع_تعليمات", uid))
+        m.row(_make_btn("زر_اشعار", uid))
         if owner:
             m.add(_make_btn("زر_المستخدمين", uid))
     else:
@@ -2591,17 +2590,27 @@ def main_menu(uid, admin=False, owner=False):
         m.row(_make_btn("زر_طلب_رفع", uid))
         m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
 
-    # ── أزرار AI/النشر — تُضاف دائماً في آخر صف (ديناميكية) ──
-    if AI_PROVIDERS:
-        load_user_auto_publish(uid)
-        pub_key = "زر_نشر_تلقائي_تفعيل" if user_auto_publish.get(uid, False) else "زر_نشر_تلقائي_تعطيل"
-        ai_key  = "زر_مساعد_نايف_تفعيل" if user_ai_enabled.get(uid, False) else "زر_مساعد_نايف_تعطيل"
-        row_switches = [
-            _make_btn(pub_key, uid),
-            _make_btn(ai_key, uid),
-        ]
-        m.row(*row_switches)
+    # ── زر الإعدادات — يفتح لوحة أزرار Inline تحتوي سويتش AI/النشر التلقائي/اللغة ──
+    m.row(_make_btn("زر_اعدادات", uid))
 
+    return m
+
+def settings_inline_menu(uid):
+    """لوحة الإعدادات (Inline): سويتش مساعد نايف، سويتش النشر التلقائي، واختيار اللغة."""
+    load_user_auto_publish(uid)
+    m = telebot.types.InlineKeyboardMarkup()
+    if AI_PROVIDERS:
+        ai_key = "زر_مساعد_نايف_تفعيل" if user_ai_enabled.get(uid, False) else "زر_مساعد_نايف_تعطيل"
+        m.row(_make_inline(ai_key, bt(ai_key, uid), "settings_toggle_ai"))
+    pub_key = "زر_نشر_تلقائي_تفعيل" if user_auto_publish.get(uid, False) else "زر_نشر_تلقائي_تعطيل"
+    m.row(_make_inline(pub_key, bt(pub_key, uid), "settings_toggle_publish"))
+    cur_lang = user_lang.get(uid, "ar")
+    lbl_ar = "🇾🇪 العربية ✅" if cur_lang == "ar" else "🇾🇪 العربية"
+    lbl_en = "🇬🇧 English ✅" if cur_lang == "en" else "🇬🇧 English"
+    m.row(
+        telebot.types.InlineKeyboardButton(lbl_ar, callback_data="settings_lang_ar"),
+        telebot.types.InlineKeyboardButton(lbl_en, callback_data="settings_lang_en"),
+    )
     return m
 
 def back_only_menu(uid):
@@ -2620,9 +2629,12 @@ def back_skip_menu(uid):
     m.row("⏭️ تخطي", _make_btn("زر_عوده", uid))
     return m
 
-def back_with_noexist(uid):
+def back_with_noexist(uid, show_noexist=True):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    m.add("لا يوجد", _make_btn("زر_عوده", uid))
+    if show_noexist:
+        m.add("لا يوجد", _make_btn("زر_عوده", uid))
+    else:
+        m.add(_make_btn("زر_عوده", uid))
     return m
 
 def subjects_menu_kb(uid):
@@ -2672,6 +2684,7 @@ def file_type_menu(uid):
 
 def add_data_menu(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    m.row(_make_btn("زر_اضافة_محاضره", uid), _make_btn("زر_رفع_تعليمات", uid))
     m.row(_make_btn("زر_اضافة_تكليف", uid), _make_btn("زر_اضافة_ملخص", uid))
     m.row(_make_btn("زر_اضافة_ملزمه", uid), _make_btn("زر_اضافة_نموذج", uid))
     m.add(_make_btn("زر_عوده", uid))
@@ -2705,11 +2718,25 @@ def rooms_menu_kb(building, uid):
     m.add(_make_btn("زر_عوده", uid))
     return m, rooms
 
-def lecture_time_menu(uid):
+def date_has_lectures(date):
+    """يتحقق إذا كان هناك أي محاضرة مسجّلة مسبقاً في هذا التاريخ."""
+    try:
+        rows = lectures_sheet.get_all_values()
+        for row in rows[1:]:
+            row_date = safe_get(row, 0)
+            if row_date and parse_date(row_date) == date:
+                return True
+        return False
+    except Exception as e:
+        log_error(f"date_has_lectures: {e}")
+        return False
+
+def lecture_time_menu(uid, show_noexist=True):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("🕐 08:00 - 10:00", "🕐 10:00 - 12:00")
     m.add("🕐 12:00 - 14:00", "⏰ توقيت آخر")
-    m.add("لا يوجد")
+    if show_noexist:
+        m.add("لا يوجد")
     m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
@@ -3630,10 +3657,17 @@ def get_last_date(data, col):
         d = safe_get(r, 0)
         if d and (get_text(safe_get(r, col)) or get_file_ids(safe_get(r, col))):
             try:
-                dates.append(parse_date(d))
+                p = parse_date(d)
+                if is_valid_date(p):
+                    dates.append(p)
             except:
                 pass
-    return sorted(dates, key=lambda x: datetime.strptime(x, "%d/%m/%Y"))[-1] if dates else None
+    if not dates:
+        return None
+    try:
+        return sorted(dates, key=lambda x: datetime.strptime(x, "%d/%m/%Y"))[-1]
+    except:
+        return None
 
 DAYS_AR = {0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس", 4: "الجمعة", 5: "السبت", 6: "الأحد"}
 DAYS_EN = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
@@ -4193,8 +4227,6 @@ def set_bot_commands():
     commands = [
         telebot.types.BotCommand("start", "بدء البوت"),
         telebot.types.BotCommand("help", "عرض التعليمات"),
-        telebot.types.BotCommand("lang", "تغيير اللغة"),
-        telebot.types.BotCommand("ai", "تشغيل المساعد الذكي"),
         telebot.types.BotCommand("id", "عرض معرّفك"),
     ]
     bot.set_my_commands(commands)
@@ -4202,10 +4234,9 @@ def set_bot_commands():
 @bot.message_handler(commands=['id'])
 def id_command(message):
     uid = message.from_user.id
-    code = calc_secret_code(uid)
     bot.send_message(
         message.chat.id,
-        f"🆔 معرّفك: `{uid}`\n🔑 كودك اليوم: `{code}`",
+        f"🆔 معرّفك: `{uid}`",
         parse_mode="Markdown"
     )
 
@@ -4545,21 +4576,7 @@ def handle_request_contact_back(call):
 @bot.message_handler(commands=['ai'])
 def ai_command(message):
     uid = message.from_user.id
-    if not AI_PROVIDERS:
-        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مفعل", uid))
-        return
-    if not is_ai_allowed(uid):
-        bot.send_message(message.chat.id, bt("رسالة_ai_غير_مسموح", uid))
-        return
-    user_ai_enabled[uid] = True
-    threading.Thread(target=set_user_ai_switch, args=(uid, True), daemon=True).start()
-    default_model = AI_PROVIDERS[0] if AI_PROVIDERS else {"icon": "❌", "name": "غير متاح"}
-    # لا نُرسل reply_markup حتى لا تتغير الواجهة الحالية
-    bot.send_message(
-        message.chat.id,
-        bt("رسالة_ai_ترحيب", uid).format(model=f"{default_model['icon']} {default_model['name']}"),
-        parse_mode="Markdown"
-    )
+    bot.send_message(message.chat.id, "⚙️ استخدم زر الإعدادات في القائمة الرئيسية لتفعيل مساعد نايف.")
 
 @bot.message_handler(commands=['ai_reset'])
 def ai_reset_command(message):
@@ -4583,14 +4600,7 @@ def ai_clear_command(message):
 @bot.message_handler(commands=['lang'])
 def language_command(message):
     uid = message.from_user.id
-    load_user_lang(uid)
-    _, rejection = get_settings()
-    allowed, _, _, open_all, _, _, _, _ = get_users()
-    if not (open_all or uid in allowed):
-        bot.send_message(message.chat.id, rejection)
-        return
-    user_state[uid] = {"choosing_lang": True}
-    bot.send_message(message.chat.id, bt("رسالة_تغيير_اللغة", uid), reply_markup=lang_menu(uid))
+    bot.send_message(message.chat.id, "⚙️ استخدم زر الإعدادات في القائمة الرئيسية لتغيير اللغة.")
 
 @bot.message_handler(commands=['help'])
 def help_message(message):
@@ -5148,6 +5158,10 @@ def handle_message(message):
     try:
         subjects_kb, subjects_list = subjects_menu_kb(uid)
         data = get_data()
+
+        if text == bt("زر_اعدادات", uid):
+            bot.send_message(message.chat.id, "⚙️ الإعدادات:", reply_markup=settings_inline_menu(uid))
+            return
 
         if text in [bt("زر_مساعد_نايف_تفعيل", uid), bt("زر_مساعد_نايف_تعطيل", uid)]:
             if not AI_PROVIDERS:
@@ -5835,7 +5849,9 @@ def handle_message(message):
                 if dtype == "lecture":
                     if state.get("room") and state.get("date"):
                         user_state[uid]["step"] = "enter_time"
-                        bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid))
+                        _show_noexist = not date_has_lectures(state.get("date", ""))
+                        user_state[uid]["show_noexist_time"] = _show_noexist
+                        bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid, show_noexist=_show_noexist))
                     else:
                         user_state[uid]["step"] = "choose_building"
                         bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
@@ -6041,7 +6057,9 @@ def handle_message(message):
                 if dtype == "lecture":
                     if state.get("subject"):
                         user_state[uid]["step"] = "enter_time"
-                        bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid))
+                        _show_noexist = not date_has_lectures(state.get("date", ""))
+                        user_state[uid]["show_noexist_time"] = _show_noexist
+                        bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid, show_noexist=_show_noexist))
                     else:
                         user_state[uid]["step"] = "choose_subject"
                         _kb_no2, _ = subjects_with_noexist_kb(uid)
@@ -6059,9 +6077,9 @@ def handle_message(message):
                                      "• `من 11` (ساعتان تلقائياً)\n"
                                      "• `١٠-١٢` (أرقام عربية)\n"
                                      "• `10 to 12`",
-                                     parse_mode="Markdown", reply_markup=back_with_noexist(uid))
+                                     parse_mode="Markdown", reply_markup=back_with_noexist(uid, show_noexist=state.get("show_noexist_time", True)))
                     return
-                elif text == "لا يوجد":
+                elif text == "لا يوجد" and state.get("show_noexist_time", True):
                     time_val = "لا يوجد"
                 else:
                     # أي نص آخر → حاول تحويله مباشرة
@@ -6069,7 +6087,7 @@ def handle_message(message):
                 _process_lecture_time(message.chat.id, uid, state, time_val, admin, owner)
                 return
             if step == "enter_time_custom":
-                time_val = "لا يوجد" if text == "لا يوجد" else normalize_time(text)
+                time_val = "لا يوجد" if (text == "لا يوجد" and state.get("show_noexist_time", True)) else normalize_time(text)
                 _process_lecture_time(message.chat.id, uid, state, time_val, admin, owner)
                 return
             if step == "confirm_lecture_overwrite":
@@ -6972,6 +6990,67 @@ def handle_file_request_decision(call):
 # تشغيل البوت
 # ─────────────────────────────────────────────────────
 
+@bot.callback_query_handler(func=lambda call: call.data in (
+    "settings_toggle_ai", "settings_toggle_publish", "settings_lang_ar", "settings_lang_en"))
+def handle_settings_callback(call):
+    uid = call.from_user.id
+    load_user_lang(uid)
+
+    if call.data == "settings_toggle_ai":
+        if not AI_PROVIDERS:
+            bot.answer_callback_query(call.id, bt("رسالة_ai_غير_مفعل", uid))
+            return
+        if not is_ai_allowed(uid):
+            bot.answer_callback_query(call.id)
+            markup = telebot.types.InlineKeyboardMarkup()
+            markup.row(
+                _make_inline("زر_ai_request_yes", bt("زر_ai_request_yes", uid), "ai_request_yes"),
+                _make_inline("زر_ai_request_no",  bt("زر_ai_request_no", uid),  "ai_request_no"),
+            )
+            bot.send_message(
+                call.message.chat.id,
+                "🤖 *مساعد نايف*\n\n"
+                "ليس لديك صلاحية استخدام المساعد الذكي.\n\n"
+                "هل تريد إرسال طلب للمالك لتفعيل الصلاحية؟",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            return
+        current = user_ai_enabled.get(uid, False)
+        new_state = not current
+        user_ai_enabled[uid] = new_state
+        threading.Thread(target=set_user_ai_switch, args=(uid, new_state), daemon=True).start()
+        bot.answer_callback_query(call.id, "✅ تم تفعيل مساعد نايف" if new_state else "🔴 تم إيقاف مساعد نايف")
+
+    elif call.data == "settings_toggle_publish":
+        if not is_ai_allowed(uid):
+            bot.answer_callback_query(call.id, bt("رسالة_ai_غير_مسموح", uid))
+            return
+        current = get_user_auto_publish(uid)
+        new_state = not current
+        if set_user_auto_publish(uid, new_state):
+            user_auto_publish[uid] = new_state
+            bot.answer_callback_query(call.id, "✅ تم تفعيل النشر التلقائي" if new_state else "🔕 تم إيقاف النشر التلقائي")
+        else:
+            bot.answer_callback_query(call.id, "❌ حدث خطأ أثناء تغيير الإعداد")
+            return
+
+    elif call.data == "settings_lang_ar":
+        user_lang[uid] = "ar"
+        save_user_lang_to_sheet(uid, "ar")
+        bot.answer_callback_query(call.id, "✅ تم التغيير إلى العربية")
+
+    elif call.data == "settings_lang_en":
+        user_lang[uid] = "en"
+        save_user_lang_to_sheet(uid, "en")
+        bot.answer_callback_query(call.id, "✅ Switched to English")
+
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=settings_inline_menu(uid))
+    except:
+        pass
+
 @bot.callback_query_handler(func=lambda call: call.data in ("ai_request_yes", "ai_request_no"))
 def handle_ai_permission_request(call):
     uid = call.from_user.id
@@ -7035,7 +7114,7 @@ def handle_ai_grant_deny(call):
                 bot.send_message(target_uid,
                                  "🤖 *مساعد نايف*\n\n"
                                  "✅ تمت الموافقة على طلبك!\n"
-                                 "اضغط على زر مساعد نايف في القائمة لتفعيله.",
+                                 "اضغط ⚙️ الإعدادات في القائمة الرئيسية ثم فعّل سويتش مساعد نايف.",
                                  parse_mode="Markdown")
             except:
                 pass
