@@ -1735,7 +1735,7 @@ def _reset_timer(uid, key, fn):
             t_old.cancel()
         except:
             pass
-    t = threading.Timer(3.0, fn)
+    t = threading.Timer(7.0, fn)
     user_state[uid]["_timer"] = t
     t.start()
 
@@ -2793,7 +2793,7 @@ def upload_confirm_menu(uid):
     return m
 
 def get_subjects():
-    """يجلب المواد من الشيت الرئيسي وشيت القاعات والمواد معاً"""
+    """يجلب المواد من شيت القاعات والمواد + كل الصفحات الست الجديدة (بدون الاعتماد على sheet1)."""
     try:
         seen, result = set(), []
         # أولاً: من شيت القاعات والمواد (العمود D)
@@ -2806,12 +2806,13 @@ def get_subjects():
                         result.append(s)
             except:
                 pass
-        # ثانياً: من الشيت الرئيسي (العمود B)
-        for row in sheet.get_all_values()[1:]:
-            s = row[1].strip() if len(row) > 1 else ""
-            if s and s not in seen:
-                seen.add(s)
-                result.append(s)
+        # ثانياً: من كل الصفحات الست الجديدة (عمود المادة بكل وحدة)
+        for tab_key, subj_col in (("lectures", 1), ("assignments", 0), ("summaries", 0), ("booklets", 0), ("exams", 0)):
+            for row in get_tab_data(tab_key):
+                s = safe_get(row, subj_col)
+                if s and s not in seen:
+                    seen.add(s)
+                    result.append(s)
         return result
     except Exception as e:
         log_error(f"get_subjects: {e}")
@@ -4739,6 +4740,12 @@ def handle_file(message):
         _reset_timer(uid, "task_content", _finish_task_content)
         return
 
+    # شبكة أمان: ملف تكليف وصل متأخر بعد ظهور أزرار حفظ/تنبيه
+    if state.get("adding_data") and state.get("step") == "task_content_ready":
+        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+        bot.send_message(message.chat.id, "📎 تم إضافة الملف للتكليف. اضغط حفظ عند الانتهاء.")
+        return
+
     if state.get("adding_data") and state.get("step") == "enter_booklet_file":
         user_state[uid]["pending_files"] = [{"file_id": file_id, "file_type": ftype}]
         user_state[uid]["step"] = "booklet_content_ready"
@@ -4772,6 +4779,12 @@ def handle_file(message):
         _reset_timer(uid, "summary_content", _finish_summary_content)
         return
 
+    # شبكة أمان: ملف وصل متأخر بعد انتهاء نافذة التجميع (مثلاً تأخير اختيار الملف بالجوال)
+    if state.get("adding_data") and state.get("step") == "choose_summary_student":
+        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+        bot.send_message(message.chat.id, "📎 تم إضافة الملف للملخص. أكمل اختيار اسم الطالب.")
+        return
+
     if state.get("editing_data") and state.get("step") == "enter_replace_content":
         cap = (message.caption or "").strip()
         user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
@@ -4788,6 +4801,12 @@ def handle_file(message):
                 bot.send_message(message.chat.id, "📋 جاهز — اضغط *استبدال* لتأكيد الاستبدال بالكامل.", parse_mode="Markdown", reply_markup=mk)
 
         _reset_timer(uid, "replace_content", _finish_replace_content)
+        return
+
+    # شبكة أمان: ملف استبدال وصل متأخر بعد ظهور أزرار التأكيد
+    if state.get("editing_data") and state.get("step") == "confirm_replace":
+        user_state[uid].setdefault("pending_files", []).append({"file_id": file_id, "file_type": ftype})
+        bot.send_message(message.chat.id, "📎 تم إضافة الملف. اضغط استبدال عند الانتهاء.")
         return
 
     if state.get("requesting_upload") and state.get("step") in ("waiting_files_req", "confirm_req"):
@@ -5120,7 +5139,7 @@ def handle_message(message):
         bot.send_message(message.chat.id, "📲 شارك جهة اتصالك:", reply_markup=cm)
         return
 
-    if sheet is None:
+    if lectures_sheet is None:
         bot.send_message(message.chat.id, "❌ لا يوجد اتصال بقاعدة البيانات.")
         return
 
