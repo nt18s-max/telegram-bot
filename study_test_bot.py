@@ -2081,6 +2081,25 @@ def get_notes():
         log_error(f"get_notes: {e}")
         return {}
 
+def save_no_lecture(date):
+    """يسجّل أن هذا التاريخ 'لا يوجد فيه محاضرات' — بدون حفظ مادة أو موقع حقيقي،
+    لكن بعلامة زمنية مميزة حتى يظهر التاريخ في الجدول بدلاً من أن يبدو وكأن البيانات لم تُضف."""
+    try:
+        rows = lectures_sheet.get_all_values()
+        for row in rows[1:]:
+            row_date = parse_date(safe_get(row, 0)) if safe_get(row, 0) else ""
+            if row_date == date:
+                # التاريخ مسجّل مسبقاً (محاضرة حقيقية أو علامة لا يوجد) — لا تكرار
+                return True
+        new_row = [date, "", "لا يوجد", ""]
+        lectures_sheet.append_row(new_row, value_input_option="USER_ENTERED")
+        invalidate_data_cache("lectures")
+        log_info(f"save_no_lecture: تسجيل 'لا يوجد محاضرات' | {date}")
+        return True
+    except Exception as e:
+        log_error(f"save_no_lecture: {e} | التاريخ={date}")
+        return False
+
 def save_lecture(date, subject, time_val, room):
     try:
         rows = lectures_sheet.get_all_values()
@@ -2659,7 +2678,7 @@ def subjects_with_noexist_kb(uid):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     for s in subjects:
         m.add(s)
-    m.add("🚫 لا يوجد", _make_btn("زر_عوده", uid))
+    m.add(_make_btn("زر_عوده", uid))
     return m, subjects
 
 def subject_options_menu(uid):
@@ -2704,9 +2723,11 @@ def edit_action_menu(uid):
     m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
-def buildings_menu(uid):
+def buildings_menu(uid, show_noexist=True):
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     m.add("🏛 القديم", "🏫 الاداب")
+    if show_noexist:
+        m.add("لا يوجد")
     m.row("↩️ رجوع خطوة", _make_btn("زر_عوده", uid))
     return m
 
@@ -5244,12 +5265,12 @@ def handle_message(message):
                     bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb)
                 elif step == "choose_room":
                     user_state[uid]["step"] = "choose_building"
-                    bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                    bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid, show_noexist=not date_has_lectures(state.get("date", ""))))
                 elif step == "enter_date":
                     dtype = state.get("data_type", "")
                     if dtype == "lecture":
                         user_state[uid]["step"] = "choose_building"
-                        bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                        bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid, show_noexist=not date_has_lectures(state.get("date", ""))))
                     else:
                         user_state[uid]["step"] = "choose_subject"
                         _kb, _ = subjects_with_noexist_kb(uid)
@@ -5500,6 +5521,13 @@ def handle_message(message):
                 date_fmt = dt_obj.strftime("%Y/%m/%d")
             except:
                 date_fmt = ld
+            # ── علامة 'لا يوجد محاضرات' — صف بدون مادة أو موقع ──
+            if len(rows_s) == 1 and not safe_get(rows_s[0], 1):
+                resp = (f"🎓 *جدول المحاضرات | {day} {date_fmt}*\n"
+                        f"{'ـ' * 34}\n\n"
+                        f"📭 لا توجد محاضرات في هذا اليوم.")
+                bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=main_menu(uid, admin=admin, owner=owner))
+                return
             ORDINALS_AR = ["الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة"]
             sep = "ـ" * 34
             resp = f"🎓 *جدول المحاضرات | {day} {date_fmt}*\n{sep}\n"
@@ -5836,13 +5864,6 @@ def handle_message(message):
                     _kb_no, _ = subjects_with_noexist_kb(uid)
                 bot.send_message(message.chat.id, "📌 اختر المادة:", reply_markup=_kb_no)
                 return
-            if step == "choose_subject" and text == "🚫 لا يوجد":
-                dtype = state.get("data_type", "")
-                label_map = {"task": "لا يوجد تكليف", "summary": "لا يوجد ملخص", "alert": "لا يوجد تنبيه", "price": "لا يوجد سعر"}
-                msg_no = label_map.get(dtype, "لا يوجد")
-                bot.send_message(message.chat.id, f"✅ تم التسجيل: {msg_no}", reply_markup=main_menu(uid, admin=admin, owner=owner))
-                user_state.pop(uid, None)
-                return
             if step == "choose_subject" and (text in subjects_list or (state.get("data_type") in ("summary", "exam") and text in get_lecture_subjects())):
                 user_state[uid]["subject"] = text
                 dtype = state.get("data_type", "")
@@ -5854,7 +5875,7 @@ def handle_message(message):
                         bot.send_message(message.chat.id, "🕐 اختر وقت المحاضرة:", reply_markup=lecture_time_menu(uid, show_noexist=_show_noexist))
                     else:
                         user_state[uid]["step"] = "choose_building"
-                        bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                        bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid, show_noexist=not date_has_lectures(state.get("date", ""))))
                 elif dtype == "price":
                     user_state[uid]["step"] = "enter_value"
                     bot.send_message(message.chat.id, "💰 أدخل سعر الملزمة:", reply_markup=back_only_menu(uid))
@@ -6024,7 +6045,7 @@ def handle_message(message):
                 dtype = state.get("data_type", "")
                 if dtype == "lecture":
                     user_state[uid]["step"] = "choose_building"
-                    bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid))
+                    bot.send_message(message.chat.id, "🏛 اختر المبنى:", reply_markup=buildings_menu(uid, show_noexist=not date_has_lectures(d)))
                 elif dtype in ("task", "summary"):
                     user_state[uid]["step"] = "enter_value"
                     col_lbl = "التكليف" if dtype == "task" else "الملخص"
@@ -6034,13 +6055,22 @@ def handle_message(message):
                     bot.send_message(message.chat.id, "⚠️ أدخل نص التنبيه:", reply_markup=back_only_menu(uid))
                 return
             if step == "choose_building":
+                if text == "لا يوجد" and not date_has_lectures(state.get("date", "")):
+                    ok = save_no_lecture(state.get("date", ""))
+                    bot.send_message(
+                        message.chat.id,
+                        f"✅ تم تسجيل: لا توجد محاضرات بتاريخ {state.get('date', '')}" if ok else bt("رسالة_خطأ", uid),
+                        reply_markup=main_menu(uid, admin=admin, owner=owner)
+                    )
+                    user_state.pop(uid, None)
+                    return
                 bmap = {"🏛 القديم": "القديم", "🏫 الاداب": "الاداب"}
                 if text in bmap:
                     user_state[uid]["building"] = bmap[text]
                     user_state[uid]["building_label"] = text
                     mk_rooms, rooms = rooms_menu_kb(bmap[text], uid)
                     if not rooms:
-                        bot.send_message(message.chat.id, "⚠️ لا توجد قاعات لهذا المبنى. اختر مبنى آخر أو أضف القاعات في شيت القاعات:", reply_markup=buildings_menu(uid))
+                        bot.send_message(message.chat.id, "⚠️ لا توجد قاعات لهذا المبنى. اختر مبنى آخر أو أضف القاعات في شيت القاعات:", reply_markup=buildings_menu(uid, show_noexist=not date_has_lectures(state.get("date", ""))))
                         return
                     user_state[uid]["step"] = "choose_room"
                     user_state[uid]["rooms"] = rooms
