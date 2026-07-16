@@ -3,6 +3,25 @@ import os
 import time
 import subprocess
 import sys
+import fcntl
+
+# ─────────────────────────────────────────────────────
+# قفل ملف — يمنع تشغيل أكثر من نسخة من main.py بنفس الوقت
+# (يحصل أحياناً عند ريستارت مزدوج من Render أثناء النشر،
+#  ويسبب تعارض 409 على توكنات تيليجرام لكل البوتات)
+# ─────────────────────────────────────────────────────
+_LOCK_FILE = "/tmp/study_bot_main.lock"
+
+def acquire_single_instance_lock():
+    lock_fd = open(_LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("⛔ نسخة ثانية من main.py شغّالة بالفعل — هذي النسخة بتنسحب فوراً لتفادي تعارض التوكنات (409).")
+        sys.exit(0)
+    lock_fd.write(str(os.getpid()))
+    lock_fd.flush()
+    return lock_fd  # نحتفظ بالمرجع حتى لا يُغلق القفل تلقائياً
 
 def run_bot_subprocess(script_name, token_var):
     while True:
@@ -19,6 +38,8 @@ def run_bot_subprocess(script_name, token_var):
         time.sleep(5)
 
 if __name__ == "__main__":
+    _lock_handle = acquire_single_instance_lock()  # يوقف العملية فوراً لو فيه نسخة ثانية شغّالة
+
     # study_test_bot
     threading.Thread(
         target=run_bot_subprocess,
