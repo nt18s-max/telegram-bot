@@ -2596,22 +2596,23 @@ def main_menu(uid, admin=False, owner=False):
     # ── القائمة الرئيسية تُبنى بالكامل من الكود — أعمدة الموضع بالشيت لم تعد تُستخدم لهذا الغرض ──
     m = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     if admin or owner:
-        m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_المواد", uid))
-        m.row(_make_btn("زر_التكاليف", uid), _make_btn("زر_الملخصات", uid))
-        m.row(_make_btn("زر_نماذج_الاختبارات", uid), _make_btn("زر_الملازم", uid))
+        m.row(_make_btn("زر_المواد", uid), _make_btn("زر_الجدول", uid))
+        m.row(_make_btn("زر_الملخصات", uid), _make_btn("زر_التكاليف", uid))
+        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
 
-        m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
+        m.row(_make_btn("زر_اضافة", uid), _make_btn("زر_تعديل", uid))
         m.row(_make_btn("زر_اشعار", uid))
         if owner:
             m.add(_make_btn("زر_المستخدمين", uid))
     else:
-        m.row(_make_btn("زر_الجدول", uid), _make_btn("زر_المواد", uid))
-        m.row(_make_btn("زر_التكاليف", uid), _make_btn("زر_الملخصات", uid))
-        m.row(_make_btn("زر_نماذج_الاختبارات", uid), _make_btn("زر_الملازم", uid))
+        m.row(_make_btn("زر_المواد", uid), _make_btn("زر_الجدول", uid))
+        m.row(_make_btn("زر_الملخصات", uid), _make_btn("زر_التكاليف", uid))
+        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
         m.row(_make_btn("زر_طلب_رفع", uid))
 
-    # ── زر الإعدادات — يفتح لوحة أزرار Inline تحتوي سويتش AI/النشر التلقائي/اللغة ──
+    # ── زر الإعدادات ──
     m.row(_make_btn("زر_اعدادات", uid))
+
 
     return m
 
