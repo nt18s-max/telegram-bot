@@ -2598,7 +2598,7 @@ def main_menu(uid, admin=False, owner=False):
     if admin or owner:
         m.row(_make_btn("زر_المواد", uid), _make_btn("زر_الجدول", uid))
         m.row(_make_btn("زر_الملخصات", uid), _make_btn("زر_التكاليف", uid))
-        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
+        m.row(_make_btn("زر_نماذج_الاختبارات", uid), _make_btn("زر_الملازم", uid))
 
         m.row(_make_btn("زر_اضافة", uid), _make_btn("زر_تعديل", uid))
         m.row(_make_btn("زر_اشعار", uid))
@@ -2607,7 +2607,7 @@ def main_menu(uid, admin=False, owner=False):
     else:
         m.row(_make_btn("زر_المواد", uid), _make_btn("زر_الجدول", uid))
         m.row(_make_btn("زر_الملخصات", uid), _make_btn("زر_التكاليف", uid))
-        m.row(_make_btn("زر_الملازم", uid), _make_btn("زر_نماذج_الاختبارات", uid))
+        m.row(_make_btn("زر_نماذج_الاختبارات", uid), _make_btn("زر_الملازم", uid))
         m.row(_make_btn("زر_طلب_رفع", uid))
 
     # ── زر الإعدادات ──
