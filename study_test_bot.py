@@ -2600,7 +2600,7 @@ def main_menu(uid, admin=False, owner=False):
         m.row(_make_btn("زر_الملخصات", uid), _make_btn("زر_التكاليف", uid))
         m.row(_make_btn("زر_نماذج_الاختبارات", uid), _make_btn("زر_الملازم", uid))
 
-        m.row(_make_btn("زر_اضافة", uid), _make_btn("زر_تعديل", uid))
+        m.row(_make_btn("زر_تعديل", uid), _make_btn("زر_اضافة", uid))
         m.row(_make_btn("زر_اشعار", uid))
         if owner:
             m.add(_make_btn("زر_المستخدمين", uid))
