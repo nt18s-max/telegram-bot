@@ -12,9 +12,12 @@ from sheets.users_repo import (
 )
 
 
-def notify_auto_publish(bot, title: str, message: str, file_ids: list = None):
+def notify_auto_publish(title: str, message: str, file_ids: list = None, bot=None):
     """إرسال إشعار للمشتركين بخدمة 'النشر التلقائي' عند إضافة المحتوى الجديد."""
     try:
+        if bot is None:
+            from bot import bot as default_bot
+            bot = default_bot
         allowed, admins, owners, open_all, admin_all, log_ids, ai_allowed, auto_publish_uids = get_users()
         if not auto_publish_uids:
             return
