@@ -58,3 +58,38 @@ def process_user_upload_request(bot, chat_id: int, uid: int, subject: str, req_t
             "❌ متعذّر إرسال الطلب للأدمن حالياً. حاول لاحقاً.",
             reply_markup=main_menu(uid, admin=False, owner=False),
         )
+
+
+def handle_upload_request_callback(bot, call):
+    """معالجة قرار الأدمن بموافقة أو رفض طلب رفع الملف."""
+    data = call.data
+    parts = data.rsplit("_", 1)
+    if len(parts) < 2:
+        return
+    action, requester_id_str = parts[0], parts[1]
+    if not requester_id_str.isdigit():
+        return
+    requester_id = int(requester_id_str)
+
+    if action == "approve_upload":
+        bot.answer_callback_query(call.id, "✅ تمت الموافقة على نشر الملف.")
+        try:
+            bot.send_message(requester_id, "🎉 تمت الموافقة على طلب رفع الملف الخاص بك ونشره بنجاح!")
+        except Exception:
+            pass
+        try:
+            bot.edit_message_text(call.message.text + "\n\n✅ *تمت الموافقة من الأدمن*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except Exception:
+            pass
+
+    elif action == "reject_upload":
+        bot.answer_callback_query(call.id, "❌ تم رفض طلب النشر.")
+        try:
+            bot.send_message(requester_id, "❌ نعتذر، تم رفض طلب رفع الملف الخاص بك من قِبل الأدمن.")
+        except Exception:
+            pass
+        try:
+            bot.edit_message_text(call.message.text + "\n\n❌ *تم رفض الطلب*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except Exception:
+            pass
+

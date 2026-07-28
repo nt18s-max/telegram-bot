@@ -36,6 +36,7 @@ from features.onboarding import (
     calc_secret_code,
     notify_owners_new_request,
     notify_owners_action,
+    handle_onboarding_callback,
 )
 from features.settings import (
     handle_settings_callback,
@@ -43,12 +44,13 @@ from features.settings import (
     handle_ai_grant_deny,
 )
 from features.summaries import get_summaries_for_subject, save_summary, delete_summary
-from features.upload_request import process_user_upload_request
+from features.upload_request import process_user_upload_request, handle_upload_request_callback
 from features.users_admin import (
     _smart_search_user,
     send_user_card,
     update_user_card_in_chat,
     format_all_users_message,
+    handle_users_admin_callback,
 )
 from files_io import send_files_with_text, _try_send_file
 from http_server import start_internal_server
@@ -222,6 +224,113 @@ def on_ai_grant_deny(call):
     handle_ai_grant_deny(bot, call)
 
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_role_admin_", "approve_role_user_", "approve_rename_", "approve_ai_on_", "reject_")))
+def on_onboarding_callback(call):
+    handle_onboarding_callback(bot, call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("role_admin_", "role_user_", "ai_on_", "ai_off_", "rename_")))
+def on_users_admin_callback(call):
+    handle_users_admin_callback(bot, call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_upload_", "reject_upload_")))
+def on_upload_request_callback(call):
+    handle_upload_request_callback(bot, call)
+
+
+@bot.message_handler(content_types=["voice"])
+def handle_voice_message(message):
+    uid = message.from_user.id
+    role = get_user_role(uid)
+    if role not in ("user", "admin", "owner"):
+        return
+
+    rec = get_user_record(uid) or {}
+    ai_switch = rec.get("ai_switch", False)
+    ai_allowed = rec.get("ai_allowed", False)
+
+    if not user_state.get(uid) and ai_switch and ai_allowed and AI_PROVIDERS:
+        text = transcribe_voice(bot, message.voice.file_id, lang=rec.get("lang", "ar"))
+        if text:
+            resp_text, meta = ask_ai(uid, text, role)
+            if resp_text:
+                bot.send_message(message.chat.id, f"🎙️ *سؤالك الصوتي:* {text}\n\n{resp_text}", parse_mode="Markdown")
+
+
+
+def _show_subject_tasks(bot, chat_id, subject):
+    tasks = get_tasks_for_subject(subject)
+    if not tasks:
+        bot.send_message(chat_id, f"📭 لا توجد تكاليف مسجلة لمادة *{subject}* حالياً.", parse_mode="Markdown")
+        return
+    for task in tasks:
+        msg = f"📝 *تكليف: {task['name']}*\n📌 المادة: {subject}"
+        if task.get("text"):
+            msg += f"\n\n{task['text']}"
+        if task.get("alert"):
+            msg += f"\n\n⚠️ *تنبيه:* {task['alert']}"
+        send_files_with_text(bot, chat_id, msg, task.get("file_ids", []))
+
+
+def _show_subject_summaries(bot, chat_id, subject):
+    items = get_summaries_for_subject(subject)
+    if not items:
+        bot.send_message(chat_id, f"📭 لا توجد ملخصات مسجلة لمادة *{subject}* حالياً.", parse_mode="Markdown")
+        return
+    for item in items:
+        msg = f"📖 *ملخص: {item['label']}*\n📌 المادة: {subject}"
+        if item.get("student"):
+            msg += f"\n✍️ إعداد الطالب: {item['student']}"
+        send_files_with_text(bot, chat_id, msg, item.get("file_ids", []))
+
+
+def _show_subject_booklets(bot, chat_id, subject):
+    items = get_booklets_for_subject(subject)
+    if not items:
+        bot.send_message(chat_id, f"📭 لا توجد ملازم مسجلة لمادة *{subject}* حالياً.", parse_mode="Markdown")
+        return
+    for b in items:
+        msg = f"📋 *ملزمة: {b['name']}*\n📌 المادة: {subject}"
+        if b.get("price"):
+            msg += f"\n💰 السعر: {b['price']}"
+        send_files_with_text(bot, chat_id, msg, b.get("file_ids", []))
+
+
+def _show_subject_exams(bot, chat_id, subject):
+    items = get_exams_for_subject(subject)
+    if not items:
+        bot.send_message(chat_id, f"📭 لا توجد نماذج اختبارات لمادة *{subject}* حالياً.", parse_mode="Markdown")
+        return
+    for ex in items:
+        msg = f"🧾 *نموذج اختبار: {ex['name']}*\n📌 المادة: {subject}"
+        send_files_with_text(bot, chat_id, msg, ex.get("file_ids", []))
+
+
+def _show_subject_lectures(bot, chat_id, subject):
+    from sheets.data_repo import get_tab_data
+    from utils.parsing import safe_get
+    lectures = []
+    for r in get_tab_data("lectures"):
+        if safe_get(r, 1) == subject:
+            lectures.append({
+                "date": safe_get(r, 0),
+                "time": safe_get(r, 2),
+                "room": safe_get(r, 3),
+                "alert": safe_get(r, 4),
+            })
+    if not lectures:
+        bot.send_message(chat_id, f"📭 لا توجد محاضرات مسجلة لمادة *{subject}* حالياً.", parse_mode="Markdown")
+        return
+    lines = [f"🕐 *جدول محاضرات مادة {subject}:*"]
+    for l in lectures:
+        t_str = f" 🕐 {l['time']}" if l.get('time') else ""
+        r_str = f" 📍 {l['room']}" if l.get('room') else ""
+        a_str = f"\n⚠️ {l['alert']}" if l.get('alert') else ""
+        lines.append(f"📅 *{l['date']}*{t_str}{r_str}{a_str}")
+    bot.send_message(chat_id, "\n\n".join(lines), parse_mode="Markdown")
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     uid = message.from_user.id
@@ -243,8 +352,8 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, "⛔ ليس لديك صلاحية الوصول.")
         return
 
-    # الأزرار الرئيسية
-    if text == bt("زر_المواد", uid):
+    # 1. الأزرار الرئيسية وأزرار العودة العامّة
+    if text == bt("زر_المواد", uid) or text in ("📚 المواد", "المواد"):
         clear_user_state(uid)
         subjects = get_subjects()
         if not subjects:
@@ -255,7 +364,61 @@ def handle_text_messages(message):
         bot.send_message(message.chat.id, "📚 اختر المادة المطلوبة:", reply_markup=m)
         return
 
-    elif text == bt("زر_اعدادات", uid):
+    elif text == bt("زر_التكاليف", uid) or text in ("📝 التكاليف", "التكاليف"):
+        clear_user_state(uid)
+        m, subjects = subjects_menu_kb(uid)
+        if not subjects:
+            bot.send_message(message.chat.id, "📭 لا توجد مواد مسجلة حالياً.")
+            return
+        user_state[uid] = {"step": "choose_shortcut_subject", "target": "assignments"}
+        bot.send_message(message.chat.id, "📝 اختر المادة لطلب تكاليفها:", reply_markup=m)
+        return
+
+    elif text == bt("زر_الجدول", uid) or text in ("🕐 أوقات المحاضرات", "الجدول"):
+        clear_user_state(uid)
+        m, subjects = subjects_menu_kb(uid)
+        if not subjects:
+            bot.send_message(message.chat.id, "📭 لا توجد مواد مسجلة حالياً.")
+            return
+        user_state[uid] = {"step": "choose_shortcut_subject", "target": "lectures"}
+        bot.send_message(message.chat.id, "🕐 اختر المادة لعرض جدول محاضراتها:", reply_markup=m)
+        return
+
+    elif text == bt("زر_الملخصات", uid) or text in ("📖 الملخصات", "الملخصات"):
+        clear_user_state(uid)
+        m, subjects = subjects_menu_kb(uid)
+        if not subjects:
+            bot.send_message(message.chat.id, "📭 لا توجد مواد مسجلة حالياً.")
+            return
+        user_state[uid] = {"step": "choose_shortcut_subject", "target": "summaries"}
+        bot.send_message(message.chat.id, "📖 اختر المادة لعرض ملخصاتها:", reply_markup=m)
+        return
+
+    elif text == bt("زر_الملازم", uid) or text in ("📋 الملازم", "الملازم"):
+        clear_user_state(uid)
+        m, subjects = subjects_menu_kb(uid)
+        if not subjects:
+            bot.send_message(message.chat.id, "📭 لا توجد مواد مسجلة حالياً.")
+            return
+        user_state[uid] = {"step": "choose_shortcut_subject", "target": "booklets"}
+        bot.send_message(message.chat.id, "📋 اختر المادة لعرض ملازمها:", reply_markup=m)
+        return
+
+    elif text == bt("زر_نماذج_الاختبارات", uid) or text in ("🧾 نماذج الاختبارات", "نماذج الاختبارات"):
+        clear_user_state(uid)
+        m, subjects = subjects_menu_kb(uid)
+        if not subjects:
+            bot.send_message(message.chat.id, "📭 لا توجد مواد مسجلة حالياً.")
+            return
+        user_state[uid] = {"step": "choose_shortcut_subject", "target": "exams"}
+        bot.send_message(message.chat.id, "🧾 اختر المادة لعرض نماذج اختباراتها:", reply_markup=m)
+        return
+
+    elif text == bt("زر_طلب_رفع", uid) or text in ("📤 طلب رفع ملف", "طلب رفع"):
+        process_user_upload_request(bot, uid, message)
+        return
+
+    elif text == bt("زر_اعدادات", uid) or text in ("⚙️ الإعدادات", "الإعدادات"):
         clear_user_state(uid)
         bot.send_message(
             message.chat.id,
@@ -265,12 +428,76 @@ def handle_text_messages(message):
         )
         return
 
-    elif text == bt("زر_عوده", uid) or text == "🔙 العودة":
+    elif text == bt("زر_عوده", uid) or text in ("🔙 العودة", "↩️ رجوع خطوة"):
         clear_user_state(uid)
         bot.send_message(message.chat.id, "القائمة الرئيسية:", reply_markup=main_menu(uid, admin, owner))
         return
 
-    # فحص الأوامر الإدارية الحرة (الأدمن/المالك)
+    # 2. التفاعل مع الخطوات والحالات الفعّالة (user_state)
+    st = user_state.get(uid)
+    if isinstance(st, dict):
+        step = st.get("step")
+
+        if step == "choose_subject":
+            subjects = get_subjects()
+            if text in subjects:
+                user_state[uid] = {"step": "subject_options", "subject": text}
+                bot.send_message(
+                    message.chat.id,
+                    f"📚 مادة *{text}*\nاختر القسم الذي تريد عرضه:",
+                    parse_mode="Markdown",
+                    reply_markup=subject_options_menu(uid),
+                )
+                return
+
+        elif step == "subject_options":
+            subj = st.get("subject")
+            if text in (bt("خيار_الجدول", uid), "🕐 أوقات المحاضرات", "أوقات المحاضرات"):
+                _show_subject_lectures(bot, message.chat.id, subj)
+                return
+            elif text in (bt("خيار_التكاليف", uid), "📝 التكاليف", "التكاليف"):
+                _show_subject_tasks(bot, message.chat.id, subj)
+                return
+            elif text in (bt("خيار_الملخص", uid), "📖 الملخصات", "الملخصات"):
+                _show_subject_summaries(bot, message.chat.id, subj)
+                return
+            elif text in (bt("خيار_الملزمه", uid), "📋 الملازم", "الملازم"):
+                _show_subject_booklets(bot, message.chat.id, subj)
+                return
+            elif text in (bt("خيار_نماذج_الاختبارات", uid), "🧾 نماذج الاختبارات", "نماذج الاختبارات"):
+                _show_subject_exams(bot, message.chat.id, subj)
+                return
+
+        elif step == "choose_shortcut_subject":
+            target = st.get("target")
+            subjects = get_subjects()
+            if text in subjects:
+                if target == "lectures":
+                    _show_subject_lectures(bot, message.chat.id, text)
+                elif target == "assignments":
+                    _show_subject_tasks(bot, message.chat.id, text)
+                elif target == "summaries":
+                    _show_subject_summaries(bot, message.chat.id, text)
+                elif target == "booklets":
+                    _show_subject_booklets(bot, message.chat.id, text)
+                elif target == "exams":
+                    _show_subject_exams(bot, message.chat.id, text)
+                user_state[uid] = {"step": "subject_options", "subject": text}
+                return
+
+        elif step in ("awaiting_rename_for_approval", "awaiting_user_card_rename"):
+            target_id = st.get("target_id")
+            if target_id:
+                i, row = find_user_row_by_id(target_id)
+                if row:
+                    users_sheet.update_cell(i, config.COL_NAME + 1, text)
+                    refresh_users_cache()
+                    bot.send_message(message.chat.id, f"✅ تم تغيير اسم المستخدم {target_id} إلى '{text}'.")
+                    update_user_card_in_chat(bot, target_id)
+                    clear_user_state(uid)
+                    return
+
+    # 3. فحص الأوامر الإدارية الحرة (الأدمن/المالك)
     if admin:
         executed, response = try_execute_admin_command(bot, text, uid, role, message.chat.id)
         if executed:
@@ -278,7 +505,7 @@ def handle_text_messages(message):
                 bot.send_message(message.chat.id, response, parse_mode="Markdown")
             return
 
-    # المساعد الذكي (إذا لم يكن في حالة/تدفق فرعي وكان السويتش مفعلاً)
+    # 4. المساعد الذكي (إذا لم يكن في حالة/تدفق فرعي وكان السويتش مفعلاً)
     rec = get_user_record(uid) or {}
     ai_switch = rec.get("ai_switch", False)
     if not user_state.get(uid) and ai_switch and AI_PROVIDERS:
@@ -287,7 +514,7 @@ def handle_text_messages(message):
             bot.send_message(message.chat.id, resp_text, parse_mode="Markdown")
             return
 
-    # النص افتراضياً
+    # 5. النص افتراضياً
     bot.send_message(message.chat.id, "لم أفهم هذا الأمر. استخدم القائمة الرئيسية للوصول للميزات.", reply_markup=main_menu(uid, admin, owner))
 
 

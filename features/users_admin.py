@@ -205,3 +205,49 @@ def format_all_users_message() -> str:
     except Exception as e:
         log_error(f"format_all_users_message: {e}")
         return "❌ حدث خطأ في قراءة بيانات المستخدمين."
+
+
+def handle_users_admin_callback(bot, call):
+    """معالجة التفاعل مع أزرار بطاقة المستخدم (ترقية، تخفيض، تفعيل AI، تغيير الاسم)."""
+    from sheets.users_repo import get_user_record, set_user_role, set_ai_allowed
+    from state import user_state
+
+    data = call.data
+    parts = data.rsplit("_", 1)
+    if len(parts) < 2:
+        return
+    action, target_uid_str = parts[0], parts[1]
+    if not target_uid_str.isdigit():
+        return
+    target_uid = int(target_uid_str)
+    rec = get_user_record(target_uid) or {}
+    name = rec.get("name", str(target_uid))
+
+    if action == "role_admin":
+        is_admin = rec.get("admin", False)
+        new_admin = not is_admin
+        set_user_role(target_uid, allowed=True, admin=new_admin, owner=False)
+        status_str = "أدمن" if new_admin else "مستخدم عادي"
+        bot.answer_callback_query(call.id, f"✅ تم تغيير رتبة {name} إلى {status_str}")
+        update_user_card_in_chat(bot, target_uid)
+
+    elif action == "role_user":
+        is_allowed = rec.get("allowed", False)
+        new_allowed = not is_allowed
+        set_user_role(target_uid, allowed=new_allowed, admin=False, owner=False)
+        status_str = "مصرح له" if new_allowed else "غير مصرح له"
+        bot.answer_callback_query(call.id, f"✅ تم تغيير حالة {name} إلى {status_str}")
+        update_user_card_in_chat(bot, target_uid)
+
+    elif action in ("ai_on", "ai_off"):
+        enable = (action == "ai_on")
+        set_ai_allowed(target_uid, enable)
+        status_str = "مفعل" if enable else "معطل"
+        bot.answer_callback_query(call.id, f"🤖 تم جعل AI {status_str} لـ {name}")
+        update_user_card_in_chat(bot, target_uid)
+
+    elif action == "rename":
+        user_state[call.from_user.id] = {"step": "awaiting_user_card_rename", "target_id": target_uid}
+        bot.answer_callback_query(call.id, "✏️ أرسل الاسم الجديد:")
+        bot.send_message(call.message.chat.id, f"✏️ أرسل الاسم الجديد للمستخدم `{name}` (`{target_uid}`):", parse_mode="Markdown")
+
