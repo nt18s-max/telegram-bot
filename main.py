@@ -6,11 +6,17 @@ import sys
 import fcntl
 
 # ─────────────────────────────────────────────────────
-# قفل ملف — يمنع تشغيل أكثر من نسخة من main.py بنفس الوقت
+# قفل ملف — يمنع تشغيل أكثر من نسخة من main.py لنفس العميل بنفس الوقت
 # (يحصل أحياناً عند ريستارت مزدوج من Render أثناء النشر،
 #  ويسبب تعارض 409 على توكنات تيليجرام لكل البوتات)
+#
+# ملاحظة multi-tenant: اسم ملف القفل يعتمد على CLIENT_ID (لو موجود)
+# حتى تقدر عدة نسخ main.py (لعملاء مختلفين) تشتغل بنفس الوقت على نفس
+# السيرفر بدون ما تحظر بعضها. لو ما في CLIENT_ID (تشغيل تقليدي لعميل
+# واحد فقط) بيرجع لنفس السلوك القديم.
 # ─────────────────────────────────────────────────────
-_LOCK_FILE = "/tmp/study_bot_main.lock"
+_CLIENT_ID = os.environ.get("CLIENT_ID", "default")
+_LOCK_FILE = f"/tmp/study_bot_main_{_CLIENT_ID}.lock"
 
 def acquire_single_instance_lock():
     lock_fd = open(_LOCK_FILE, "w")
@@ -71,12 +77,25 @@ if __name__ == "__main__":
     print("✅ جميع البوتات تم تشغيلها")
 
     # Flask يشتغل على PORT الرئيسي — آخر شيء في الكود
-    try:
-        from server.app import app
-        port = int(os.environ.get("PORT", 10000))
-        print(f"▶️ تشغيل Flask على port {port}...")
-        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-    except Exception as e:
-        print(f"❌ خطأ في Flask: {e}")
+    #
+    # ملاحظة multi-tenant: على Render ما في إلا PORT واحد مسموح للخدمة
+    # كلها (health check). لو main.py هذا شغّال كـ subprocess لعميل من
+    # جوّا manager.py، ما لازم يحاول يفتح نفس الـ PORT مرة ثانية (تصادم).
+    # لذلك Flask يشتغل هنا فقط إذا IS_PRIMARY=1 (يعني هذا هو العميل
+    # الرئيسي/الوحيد، أو تشغيل main.py مباشرة بدون manager.py على
+    # الإطلاق). العمليات الفرعية لبقية العملاء تبقى شغّالة (polling)
+    # بدون Flask، ومنافذها الداخلية (INTERNAL_PORT...) مختلفة أصلاً.
+    if os.environ.get("IS_PRIMARY", "1") == "1":
+        try:
+            from server.app import app
+            port = int(os.environ.get("PORT", 10000))
+            print(f"▶️ تشغيل Flask على port {port}...")
+            app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+        except Exception as e:
+            print(f"❌ خطأ في Flask: {e}")
+            while True:
+                time.sleep(60)
+    else:
+        print("ℹ️ IS_PRIMARY != 1 — ما رح نشغّل Flask بهاي النسخة (عميل ثانوي تحت manager.py)")
         while True:
             time.sleep(60)
